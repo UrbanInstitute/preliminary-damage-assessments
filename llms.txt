@@ -1,5 +1,4 @@
-Preliminary Damage Assessments for Presidential Disaster Declaration
-Requests ================
+# Preliminary Damage Assessments for Presidential Disaster Declaration Requests
 
 ## Disclaimer
 
