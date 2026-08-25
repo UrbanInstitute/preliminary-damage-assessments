@@ -9,8 +9,8 @@ Description: Downloads FEMA Preliminary Damage Assessment (PDA) report PDFs,
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-URL: https://github.com/UrbanInstitute/preliminarydamages, https://UrbanInstitute.github.io/preliminarydamages/
-BugReports: https://github.com/UrbanInstitute/preliminarydamages
+URL: https://github.com/UrbanInstitute/preliminary-damage-assessments, https://UrbanInstitute.github.io/preliminary-damage-assessments/
+BugReports: https://github.com/UrbanInstitute/preliminary-damage-assessments/issues
 Depends:
     R (>= 4.1)
 Imports:

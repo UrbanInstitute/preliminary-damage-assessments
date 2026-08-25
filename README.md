@@ -16,7 +16,7 @@ choose to use these data.
 
 ``` r
 ## install.packages("remotes")
-remotes::install_github("wcurrangroome/preliminary-damage-assessments")
+remotes::install_github("UrbanInstitute/preliminary-damage-assessments")
 ```
 
 ## Overview
