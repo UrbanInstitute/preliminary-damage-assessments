@@ -1,7 +1,8 @@
 ---
-title: "Preliminary Damage Assessments for Presidential Disaster Declaration Requests"
 output: github_document
 ---
+
+# Preliminary Damage Assessments for Presidential Disaster Declaration Requests
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
