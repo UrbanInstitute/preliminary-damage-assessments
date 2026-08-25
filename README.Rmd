@@ -1,0 +1,192 @@
+---
+title: "Preliminary Damage Assessments for Presidential Disaster Declaration Requests"
+output: github_document
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6,
+  fig.path = "man/figures/README-",
+  dpi = 300,
+  eval = TRUE,
+  echo = TRUE)
+
+library(preliminarydamages)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(urbnthemes)
+
+set_urbn_defaults(style = "print")
+
+options(scipen = 999)
+```
+
+## Disclaimer
+
+The structured data returned by this package are created by extracting values
+from PDF reports. This process is inherently imprecise, and it is likely that
+some values in the structured data are incorrect relative to the source PDFs. 
+We have taken significant steps to mitigate the prevalence of such errors through
+both manual spot-checking and programmatic testing, but users should take this into 
+account if they choose to use these data. 
+
+## Installation
+
+```{r install, eval = FALSE}
+## install.packages("remotes")
+remotes::install_github("wcurrangroome/preliminary-damage-assessments")
+```
+
+## Overview
+
+When a state, territory, or tribal (STT) government believes an event exceeds its
+capacity to respond, it may request a major disaster declaration from the
+president. Before that request is granted or denied, FEMA and its partners
+conduct a *preliminary damage assessment* (PDA) that estimates the scale of
+the damage and the characteristics of the communities impacted. Information 
+collected during PDAs does not determine whether a disaster declaration request
+is approved--that is ultimately at the sole discretion of the president--but
+it does form an important basis for whether the Federal Emergency Management Agency (FEMA) 
+recommends to the president that the president declare a disaster.
+
+STT governments are the leads on disaster declaration requests, and FEMA is the primary
+agency that coordinates this process, including participating in conducting joint 
+preliminary damage assessments with the STT and local governments and producing the summative
+PDA reports located at https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports.
+These reports consistently document key attributes reflecting the PDA findings, such as total
+estimated Public Assistance (PA) and Individual Assistance (IA) costs, as well as the extent of
+damage to housing and the characteristics of impacted populations. 
+
+However, because these reports are text-based PDFs, and because FEMA does not publish
+these data in a tabular format, it has been challenging to date to systematically 
+access and use this valuable information to understand when and under what conditions 
+disaster declaration requests are approved and denied. 
+
+`get_preliminary_damage_assessments()` extracts these data from the
+PDA reports FEMA publishes and then joins them to authoritative datasets from
+FEMA describing disaster declaration request approvals and denials.
+
+## Data sources
+
+| Role | Dataset | Access |
+|---|---|---|
+| Damage estimates | PDA reports | `preliminarydamages::get_preliminary_damage_assessments()` |
+| Approved requests | `DisasterDeclarationsSummaries` | OpenFEMA, via `rfema::open_fema()` |
+| Denied requests | `DeclarationDenials` | OpenFEMA, via `rfema::open_fema()` |
+
+The two FEMA datasets are *authoritative*: they are FEMA's own structured
+records of which declaration requests were approved and denied. The PDAs, by contrast,
+are text-extracted from unstructured PDFs and carry the caveats described in
+`?get_preliminary_damage_assessments`. We treat observations
+from the authoritative FEMA datasets as defining the universe of declarations,
+and we map PDAs back to this universe so that we can better understand the 
+relationships between preliminary damages and disaster declaration decisionmaking. 
+
+## PDA Data Preparation
+
+The package provides three functions for accessing PDA data: 
+
+ - `scrape_pda_pdfs()` finds the URLs to every PDA report at 
+  https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports and
+  then systematically downloads these PDFs into a user-specified directory. These PDFs
+  are the basis for the dataset produced by the following function. Because FEMA receives 
+  and the President makes disaster request decisions on an ongoing basis, the results of this
+  function quickly become stale: new PDA reports are available online but are not reflected
+  in the user's specified directory. Accordingly, it is important to re-run this function 
+  frequently if the most up-to-date data are important. The function does not re-download reports
+  that are already saved in the user-specified directory, so after the initial run, which can be 
+  slow, subsequent runs should be very fast--they only add new reports.
+- `get_preliminary_damage_assessments()` walks the user's specified directory and extracts 
+  structured attributes from each PDA report, compiling data from all reports in the directory 
+  into a consistent dataset, and joining PDA attributes back to the authoritative FEMA-published 
+  datasets of declaration request approvals and denials.
+- `transform_pda_counties()` restructures the request-level data from `get_preliminary_damage_assessments()`
+  into a county-request structured dataset. While requests originate from STT governments, they 
+  delineate specific counties--both estimated costs per county, and the programs (PA and IA) that
+  are requested to be made available for each county. 
+
+```{r load-pdas, eval = FALSE}
+## run this to update (or create for the first time) the local 
+## store of all PDFS
+scrape_pda_pdfs(cache_directory = file.path("data", "pdfs"))
+```
+
+```{r}
+## this extracts attributes from all reports
+## use_cache = TRUE will not capture newly-scraped PDFs
+pdas = get_preliminary_damage_assessments(
+  file_path = file.path("data", "pdas.csv"),
+  directory_path = file.path("data", "pdfs"),
+  use_cache = TRUE)
+```
+
+## Analysis
+
+With our data in hand, it's trivial to summarize the universe of disaster declaration requests
+over time:
+
+```{r declarations-over-time}
+percent_approved = pdas %>%
+  count(fema_decision) %>%
+  mutate(percent = round(prop.table(n) * 100, digits = 0)) %>%
+  filter(fema_decision == "Approved") %>%
+  pull(percent)
+
+pdas %>%
+  ggplot() +
+  geom_bar(aes(x = fema_decision_year, fill = fema_decision)) +
+  scale_x_continuous(breaks = seq(1950, 2030, by = 10)) +
+  labs(
+    title = str_c(glue::glue("Since the 1950s, {percent_approved}% of disaster ", 
+    "declaration requests have been approved")),
+    x = "",
+    y = "")
+```
+
+But access to systematic information on damages and housing impacts are the novel 
+contributions from the PDAs. 
+
+One of the primary factors intended to determine whether PA is declared is whether the estimated 
+per-capita damages (in dollars), per person, across the entire STT government, 
+exceed an established per-capita threshold or indicator, known as the (statewide) 
+Per Capita Impact (PCI) indicator. 
+
+In 2026, this PCI is $1.94. There is also a separate PCI at the county level, which accounts 
+for the fact that disaster damages could be concentrated in a subset of counties and warrant a 
+declaration for one or more counties, even if total damages do not meet the statewide PCI and 
+a statewide disaster declaration may not be appropriate. The countywide PCI in 2026 is $4.86.
+
+(Because published PDAs are only available from ~2008 onward, we restrict the data 
+to that window.)
+
+```{r pa-threshold-ratio}
+pdas %>%
+  filter(pda_matched == 1, pda_pa_requested == 1, fema_decision_year > 2007) %>%
+  ggplot(aes(x = fema_decision, y = log(pda_pa_threshold_ratio), color = fema_decision)) +
+    geom_boxplot(fill = NA) +
+    geom_hline(yintercept = 0) +
+    annotate(
+      "text", x = 1.5, y = 2.75, hjust = 1,
+      label = str_wrap("Requests above zero exceed the per-capita threshold", 25)) +
+    annotate(
+      "curve", x = 1.4, y = 2.1, xend = 1.5, yend = 0.1, curvature = -0.35,
+      arrow = arrow(length = unit(0.02, "npc"), type = "closed")) +
+    labs(
+      title = str_c(
+        "Many denied requests exceed the per-capita damages threshold") %>% str_wrap(100),
+        subtitle = str_c(
+          "Ratio of Public Assistance per-capita damages relative to the statewide ",  
+          "per-capita indicator, logged") %>% str_wrap(100),
+      x = "",  y = "")
+```
+
+## Use of Generative AI
+
+This package was developed in part using agentic AI, under the supervision of the author. 

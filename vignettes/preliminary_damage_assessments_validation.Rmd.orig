@@ -1,0 +1,293 @@
+---
+title: "Validating the Preliminary Damage Assessment Fields"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Validating the Preliminary Damage Assessment Fields}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  ## this file is knit from the vignettes directory, so the package's
+  ## man/figures directory is one level up
+  fig.path = file.path("..", "man", "figures", "validation-"),
+  warning = FALSE,
+  message = FALSE,
+  eval = TRUE,
+  echo = TRUE)
+
+options(scipen = 999)
+
+library(preliminarydamages)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(purrr)
+
+set.seed(1)
+```
+
+## Load data
+
+Note that this relies on a cached dataset; refer to the README for creating
+such data from scratch.
+
+```{r data}
+pdas = get_preliminary_damage_assessments(
+  file_path = file.path("..", "data", "pdas.csv"),
+  use_cache = TRUE)
+  
+pdas = pdas %>%
+  ## many records precede 2007/2008, which is the first year when PDAs are available /
+  ## included in this dataset -- these pre-2007 records have only values direct from
+  ## authoritative FEMA datasets
+  filter(fema_decision_year > 2006)
+```
+
+## Data checks
+
+### What time period do PDAs cover?
+```{r pda_date_determined}
+pdas %>%
+  summarize(
+    earliest = min(pda_date_determined, na.rm = TRUE),
+    latest = max(pda_date_determined, na.rm = TRUE),
+    missing = sum(is.na(pda_date_determined)))
+
+## the determination precedes the decision it feeds
+pdas %>%
+  count(
+    determined_before_decision =
+      pda_date_determined <= fema_decision_date)
+
+## there is only one day of difference, and the join is on the disaster number
+pdas %>%
+  filter(pda_date_determined > fema_decision_date) %>%
+  select(fema_decision_date, pda_date_determined, pda_warnings)
+```
+
+### How does PDA match coverage look, relative to the universe of approvals and denials?
+```{r pda_matched}
+pdas %>% count(fema_decision, pda_matched)
+
+## pdas only exist for ~2008 onward
+pdas %>%
+  filter(fema_decision_year > 2007) %>%
+  count(fema_decision, pda_matched)
+
+## and coverage for the most recent events
+## (2026, as of time of writing) is relatively poor
+pdas %>%
+  filter(
+    fema_decision_year > 2007,
+    fema_decision_year < 2026) %>%
+  count(fema_decision, pda_matched)
+```
+
+### How accurately are PDAs matched to their corresponding records from authoritative FEMA sources?
+```{r pda_match_quality}
+pdas %>%
+  filter(pda_matched) %>%
+  mutate(match_type = str_extract(pda_match_quality, "^[a-z]+")) %>%
+  count(fema_decision, match_type)
+```
+
+### Do PDA-derived request decisions align with FEMA-reported decisions?
+```{r pda_decision}
+pdas %>% 
+  filter(pda_matched) %>%
+  count(fema_decision, pda_decision)
+```
+
+### For less high-precision matches, do dates and event titles match?
+```{r pda_declaration_title}
+## even for events not joined on the exact disaster number, event language aligns
+## with fema-reported event titles
+pdas %>%
+  filter(
+    pda_matched,
+    !str_detect(pda_match_quality, "exact") | is.na(pda_match_quality)) %>%
+  select(fema_declaration_title, pda_text, matches("date")) %>%
+  select(-fema_declaration_request_date) %>%
+  mutate(
+    pda_text = pda_text %>% 
+      str_sub(1, 100) %>% str_remove("Preliminary Damage Assessment Report")) %>%
+  print(width = Inf)
+```
+
+### Tribal-led declaration requests have PDAs that are formatted differently. Are these distinguished correctly?
+```{r pda_tribal_flag}
+pdas %>% 
+  filter(pda_matched) %>%
+  count(pda_tribal_flag)
+
+pdas %>%
+  filter(pda_tribal_flag == 1) %>%
+  count(pda_tribal_name, pda_tribal_fips) %>%
+  arrange(pda_tribal_name) %>%
+  print(n = Inf)
+
+## tribal-led PDAs typically reference the tribal leader who requested the declaration
+## this should return no observations, because all matching reports should be flagged as tribal
+pdas %>%
+  filter(pda_tribal_flag == 0, str_detect(pda_text, "Chairman|Chairwoman|Chairperson|Council President|Chief")) %>%
+  head() %>%
+  pull(pda_text)
+```
+
+### Do we accurately/consistently derive the referenced hazards in the PDAs? These are important because we use these to disambiguate matches between PDAs and authoritative FEMA denial records.
+```{r pda_hazards}
+pdas %>%
+  filter(pda_matched) %>%
+  separate_longer_delim(pda_hazards, delim = "; ") %>%
+  count(pda_hazards, sort = TRUE) %>%
+  print(n = Inf)
+
+pdas %>%
+  filter(pda_matched) %>%
+  separate_longer_delim(pda_hazards, delim = "; ") %>%
+  filter(is.na(pda_hazards)) %>%
+  select(fema_decision_date, fema_declaration_title, pda_declaration_title)
+
+## virtually all joined pdas have a shared hazard(s) with the matching FEMA event
+pdas %>%
+  filter(!is.na(fema_hazards), !is.na(pda_hazards)) %>%
+  mutate(
+    shared_hazards = map2_int(
+      str_split(pda_hazards, "; "),
+      str_split(fema_hazards, "; "),
+      ~ length(intersect(.x, .y)))) %>%
+  count(any_shared_hazard = shared_hazards > 0)
+```
+
+### Do PA requests derived from PDAs align with FEMA-reported values?
+```{r pda_pa_requested}
+pdas %>% 
+  filter(pda_matched) %>%
+  count(pda_pa_requested)
+
+## very small shares of matched records disagree--users should review the records in question
+## and make their own determinations about which value they believe to be correct
+pdas %>%
+  filter(fema_decision == "Denied", pda_matched) %>%
+  count(fema_pa_requested, pda_pa_requested)
+```
+
+### Do Individual Assistance (IA) requests derived from PDAs align with FEMA-reported values? 
+
+Note that differences between IA and Individuals and Households Program (IHP)--a subset of IA--explain some divergence.
+```{r pda_ia_requested}
+pdas %>% 
+  filter(pda_matched) %>%
+  count(pda_ia_requested)
+
+## very small shares of matched records disagree--users should review the records in question
+## and make their own determinations about which value they believe to be correct
+pdas %>%
+  filter(fema_decision == "Denied", pda_matched) %>%
+  count(fema_ihp_requested, pda_ia_requested)
+```
+
+### Do we have unexpected missingness for PA cost estimates?
+```{r pda_pa_cost_estimate_total}
+pdas %>%
+  filter(pda_pa_requested == 1) %>%
+  summarize(
+    nonmissing = sum(!is.na(pda_pa_cost_estimate_total)),
+    missing_no_preemptive_declaration = sum(
+      is.na(pda_pa_cost_estimate_total) & pda_pa_preemptive_declaration == 0),
+    minimum = min(pda_pa_cost_estimate_total, na.rm = TRUE),
+    median = median(pda_pa_cost_estimate_total, na.rm = TRUE),
+    maximum = max(pda_pa_cost_estimate_total, na.rm = TRUE))
+
+## some (few) records simply have no listed PA cost estimates, despite
+## requesting PA -- as evidenced by matched "Public Assistance" terms in the PDA
+## text (code below). this can be due to, e.g., ongoing PDA activities, or potentially to cases
+## that do not reference preemptive declarations but where total damages are nonetheless
+## assumed to far surpass the statewide per capita impact threshold
+pdas %>%
+  filter(
+    pda_pa_requested == 1,
+    is.na(pda_pa_cost_estimate_total),
+    pda_pa_preemptive_declaration == 0) %>%
+  filter(
+    !str_detect(pda_text, 
+    "Public Assistance (for|and)|Public Assistance (C|c)ategories|Public Assistance program|Public Assistance Category")) %>%
+  pull(pda_text)
+```
+
+### There should be two different indicator values per calendar year--one for each fiscal year.
+
+Users can consider imputing the presumably-applicable value for those limited cases where the
+value in the PDA report does not align with the statutorily-applicable value.
+```{r pda_pa_per_capita_impact_indicator_statewide}
+## the statutory threshold is uniform within a federal fiscal year, which runs
+## from October through September
+pdas %>%
+  filter(pda_matched) %>%
+  mutate(
+    fiscal_year = lubridate::year(pda_date_determined) +
+      if_else(lubridate::month(pda_date_determined) >= 10, 1, 0)) %>%
+  count(fiscal_year, pda_pa_per_capita_impact_indicator_statewide) %>%
+  arrange(fiscal_year) %>%
+  print(n = Inf)
+```
+
+### How well can we create a derived dataset where each record represents a county-declaration observation?
+```{r pda_pa_per_capita_impact_countywide}
+pdas %>%
+  filter(!is.na(pda_pa_per_capita_impact_countywide)) %>%
+  slice_sample(n = 3) %>%
+  pull(pda_pa_per_capita_impact_countywide) %>%
+  str_squish()
+
+counties = pdas %>% transform_pda_counties()
+
+counties %>%
+  filter(pda_matched) %>%
+  count(is.na(pda_county_geoid))
+
+counties %>% 
+  mutate(missing_geoid = is.na(pda_county_geoid)) %>%
+  count(missing_geoid, pda_geography_type, sort = TRUE) %>%
+  filter(missing_geoid)
+
+counties %>%
+  mutate(missing_geoid = is.na(pda_county_geoid)) %>%
+  filter(pda_matched, missing_geoid) %>%
+  count(fema_state_name, pda_county_name_reported, pda_geography_type, sort = TRUE) %>%
+  print(n = 10)
+```
+
+### Are percentage values reasonably distributed?
+```{r pda_ia_percent_columns}
+pdas %>%
+  select(ends_with("_percent")) %>%
+  pivot_longer(everything(), names_to = "column", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  summarize(
+    .by = column,
+    records = n(),
+    minimum = min(value),
+    median = median(value),
+    maximum = max(value)) %>%
+  print(n = Inf)
+```
+
+### Do we have (m)any warnings about potential quality issues?
+```{r pda_warnings}
+pdas %>%
+  summarize(
+    records = n(),
+    flagged = sum(!is.na(pda_warnings)))
+
+## outlier and equals-zero warnings are dropped -- these aren't inherently issues, just flags
+## for anomalous values 
+pdas %>%
+  separate_longer_delim(pda_warnings, delim = "; ") %>%
+  filter(!is.na(pda_warnings), !str_detect(pda_warnings, "100 times|exactly zero")) %>%
+  count(pda_warnings, sort = TRUE)
+```

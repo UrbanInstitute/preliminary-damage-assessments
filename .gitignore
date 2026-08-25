@@ -1,0 +1,13 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+docs
+inst/doc
+/doc/
+/Meta/
+vignettes/*.html
+vignettes/*_files/
+/data/
+README_files/
+README.html

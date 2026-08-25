@@ -1,0 +1,16 @@
+url: https://UrbanInstitute.github.io/preliminarydamages/
+
+template:
+  bootstrap: 5
+
+reference:
+- title: Functions
+  contents:
+  - scrape_pda_pdfs
+  - get_preliminary_damage_assessments
+  - transform_pda_counties
+
+articles:
+- title: Articles
+  contents:
+  - preliminary_damage_assessments_validation

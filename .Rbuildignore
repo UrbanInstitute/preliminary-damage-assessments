@@ -1,0 +1,15 @@
+^\.git$
+^README\.Rmd$
+^data$
+^\.github$
+^_pkgdown\.yml$
+^docs$
+^pkgdown$
+^LICENSE\.md$
+^renv$
+^renv\.lock$
+^\.Rproj\.user$
+^.*\.Rproj$
+^README\.html$
+^README_files$
+^vignettes/.*\.Rmd\.orig$

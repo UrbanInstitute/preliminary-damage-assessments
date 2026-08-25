@@ -1,0 +1,49 @@
+Package: preliminarydamages
+Title: Access FEMA Preliminary Damage Assessment Reports
+Version: 0.1.0
+Authors@R:
+    person("Will", "Curran-Groome", email = "wcurrangroome@urban.org", role = c("aut", "cre"))
+Description: Downloads FEMA Preliminary Damage Assessment (PDA) report PDFs,
+    extracts their fields into a tidy dataset, joins declaration outcomes,
+    and reshapes county listings into one row per report-county.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+URL: https://github.com/UrbanInstitute/preliminarydamages, https://UrbanInstitute.github.io/preliminarydamages/
+BugReports: https://github.com/UrbanInstitute/preliminarydamages
+Depends:
+    R (>= 4.1)
+Imports:
+    curl,
+    dplyr,
+    httr,
+    janitor,
+    lubridate,
+    magrittr,
+    pdftools,
+    purrr,
+    readr,
+    rfema,
+    rlang,
+    rvest,
+    sf,
+    stringr,
+    tibble,
+    tidycensus,
+    tidylog,
+    tidyr,
+    tigris
+Suggests:
+    ggplot2,
+    glue,
+    knitr,
+    rmarkdown,
+    scales,
+    testthat (>= 3.0.0),
+    urbnthemes
+Remotes:
+    ropensci/rfema,
+    UrbanInstitute/urbnthemes
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0
