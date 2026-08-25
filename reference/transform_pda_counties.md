@@ -1,6 +1,6 @@
 # Split the county listing in a PDA report into one row per county-request
 
-[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md)
+[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md)
 returns one observation per request, but county-level per-capita impacts
 are specified in many PDAs as a single, comma-separated string. This
 function splits that text into one row per county-request, including a
@@ -17,7 +17,7 @@ transform_pda_counties(pda_df)
 - pda_df:
 
   A dataframe returned by
-  [`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md).
+  [`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md).
 
 ## Value
 

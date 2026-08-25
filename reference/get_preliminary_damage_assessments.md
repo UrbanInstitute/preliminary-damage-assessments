@@ -25,7 +25,7 @@ get_preliminary_damage_assessments(
 
   The path to the directory where PDA PDFs are stored. These files are
   not fetched by this function; run
-  [`scrape_pda_pdfs()`](https://UrbanInstitute.github.io/preliminarydamages/reference/scrape_pda_pdfs.md)
+  [`scrape_pda_pdfs()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/scrape_pda_pdfs.md)
   to download them and to refresh the archive as FEMA publishes new
   reports.
 
@@ -223,7 +223,7 @@ include:
 - pda_pa_per_capita_impact_countywide:
 
   Raw text of countywide per capita impact ratios. Pass the data to
-  [`transform_pda_counties()`](https://UrbanInstitute.github.io/preliminarydamages/reference/transform_pda_counties.md)
+  [`transform_pda_counties()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/transform_pda_counties.md)
   to split this text into one row per county, each with its own county
   FIPS code and per capita impact.
 

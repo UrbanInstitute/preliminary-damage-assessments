@@ -16,7 +16,7 @@ choose to use these data.
 ``` r
 
 ## install.packages("remotes")
-remotes::install_github("wcurrangroome/preliminary-damage-assessments")
+remotes::install_github("UrbanInstitute/preliminary-damage-assessments")
 ```
 
 ## Overview
@@ -50,7 +50,7 @@ to date to systematically access and use this valuable information to
 understand when and under what conditions disaster declaration requests
 are approved and denied.
 
-[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md)
+[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md)
 extracts these data from the PDA reports FEMA publishes and then joins
 them to authoritative datasets from FEMA describing disaster declaration
 request approvals and denials.
@@ -59,7 +59,7 @@ request approvals and denials.
 
 | Role | Dataset | Access |
 |----|----|----|
-| Damage estimates | PDA reports | [`preliminarydamages::get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md) |
+| Damage estimates | PDA reports | [`preliminarydamages::get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md) |
 | Approved requests | `DisasterDeclarationsSummaries` | OpenFEMA, via [`rfema::open_fema()`](https://rdrr.io/pkg/rfema/man/open_fema.html) |
 | Denied requests | `DeclarationDenials` | OpenFEMA, via [`rfema::open_fema()`](https://rdrr.io/pkg/rfema/man/open_fema.html) |
 
@@ -67,7 +67,7 @@ The two FEMA datasets are *authoritative*: they are FEMA’s own
 structured records of which declaration requests were approved and
 denied. The PDAs, by contrast, are text-extracted from unstructured PDFs
 and carry the caveats described in
-[`?get_preliminary_damage_assessments`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md).
+[`?get_preliminary_damage_assessments`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md).
 We treat observations from the authoritative FEMA datasets as defining
 the universe of declarations, and we map PDAs back to this universe so
 that we can better understand the relationships between preliminary
@@ -77,7 +77,7 @@ damages and disaster declaration decisionmaking.
 
 The package provides three functions for accessing PDA data:
 
-- [`scrape_pda_pdfs()`](https://UrbanInstitute.github.io/preliminarydamages/reference/scrape_pda_pdfs.md)
+- [`scrape_pda_pdfs()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/scrape_pda_pdfs.md)
   finds the URLs to every PDA report at
   <https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports>
   and then systematically downloads these PDFs into a user-specified
@@ -91,15 +91,15 @@ The package provides three functions for accessing PDA data:
   reports that are already saved in the user-specified directory, so
   after the initial run, which can be slow, subsequent runs should be
   very fast–they only add new reports.
-- [`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md)
+- [`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md)
   walks the user’s specified directory and extracts structured
   attributes from each PDA report, compiling data from all reports in
   the directory into a consistent dataset, and joining PDA attributes
   back to the authoritative FEMA-published datasets of declaration
   request approvals and denials.
-- [`transform_pda_counties()`](https://UrbanInstitute.github.io/preliminarydamages/reference/transform_pda_counties.md)
+- [`transform_pda_counties()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/transform_pda_counties.md)
   restructures the request-level data from
-  [`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md)
+  [`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md)
   into a county-request structured dataset. While requests originate
   from STT governments, they delineate specific counties–both estimated
   costs per county, and the programs (PA and IA) that are requested to

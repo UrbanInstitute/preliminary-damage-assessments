@@ -2,10 +2,10 @@
 
 Downloads every PDA report that FEMA publishes into a local directory so
 that
-[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md)
+[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md)
 has a complete and current set of source documents to parse. Run this
 before regenerating the dataset;
-[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminarydamages/reference/get_preliminary_damage_assessments.md)
+[`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md)
 parses whatever is already on disk and never fetches anything itself.
 
 ## Usage
