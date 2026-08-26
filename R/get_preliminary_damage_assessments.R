@@ -748,23 +748,9 @@ extract_pda_attributes = function(path) {
     value3 = stringr::str_remove_all(value2, "\\$|\\:|\\,")
     dplyr::if_else(stringr::str_detect(value3, "^N.A$"), NA_character_, value3) }
 
-  summarise_countywide = function(matches, summary_function) {
-    purrr::map_dbl(
-      matches,
-      ~ if (length(.x) == 0 || all(is.na(.x))) {
-          NA_real_
-        } else {
-          summary_function(as.numeric(.x), na.rm = TRUE) }) }
-
   result2 = result %>%
     dplyr::mutate(
       dplyr::across(-dplyr::all_of(non_extracted_columns()), clean_extracted_value),
-      pa_per_capita_impact_countywide_1 = pa_per_capita_impact_countywide %>%
-        stringr::str_extract_all("[0-9]{1,4}\\.[0-9]{1,3}"),
-      pa_per_capita_impact_countywide_max =
-        summarise_countywide(pa_per_capita_impact_countywide_1, max),
-      pa_per_capita_impact_countywide_min =
-        summarise_countywide(pa_per_capita_impact_countywide_1, min),
       ## The determination date is taken from the report title where it states
       ## one, then from an explicit "Denied on <date>" statement, and finally
       ## from the first date printed in the document. That last source carries
@@ -785,7 +771,6 @@ extract_pda_attributes = function(path) {
           non_extracted_columns(),
           "event_date_determined", "pa_per_capita_impact_countywide", "pa_primary_impact")),
         .fns = ~ first_token(.x) %>% as.numeric)) %>%
-    dplyr::select(-pa_per_capita_impact_countywide_1) %>%
     dplyr::select(disaster_number, dplyr::matches("^event"), dplyr::matches("^pa"), dplyr::everything())
 
   return(result2)
@@ -1811,19 +1796,24 @@ match_tribal_names_to_native_areas = function(tribal_names) {
 #' rule can separate them, and there are few enough such cases to settle by
 #' hand.
 #'
-#' @return A tibble of `pda_file`, `denial_id`, and `note`.
+#' The link is recorded as FEMA's own declaration request number, so that a
+#' change to how FEMA spells a state or names an incident cannot silently break
+#' it. `apply_manual_pda_denial_links()` warns about a link whose request number
+#' is absent from FEMA's denial records.
+#'
+#' @return A tibble of `pda_file`, `declaration_request_number`, and `note`.
 #' @noRd
 manual_pda_denial_links = function() {
   tibble::tribble(
-    ~pda_file, ~denial_id, ~note,
+    ~pda_file, ~declaration_request_number, ~note,
 
     "PDAReportDenialOST.pdf",
-    "South Dakota | 2018-09-18 | OST severe storm 07/27/2018",
-    "Both South Dakota requests were turned down on 2018-09-18. FEMA abbreviates the Oglala Sioux Tribe to 'OST' in the incident name; the report is the Oglala Sioux Tribe's.",
+    "24016",
+    "Both South Dakota requests were turned down on 2018-09-18. FEMA abbreviates the Oglala Sioux Tribe to 'OST' in the incident name (request 24016); the report is the Oglala Sioux Tribe's.",
 
     "PDAReportDenialCRST.pdf",
-    "South Dakota | 2018-09-18 | SD - Severe Storms 07/04/2018",
-    "The other of the two same-day South Dakota denials, left for the Cheyenne River Sioux Tribe once the Oglala Sioux Tribe claims the denial naming it.")
+    "24015",
+    "The other of the two same-day South Dakota denials (request 24015, 'SD - Severe Storms 07/04/2018'), left for the Cheyenne River Sioux Tribe once the Oglala Sioux Tribe claims the denial naming it.")
 }
 
 #' Fill in the statutory per capita indicators where a report omits them
@@ -1961,9 +1951,9 @@ impute_per_capita_indicators = function(pda_df) {
 #' @param denied_pdas Denied PDA records, with `state_name`, `decision`,
 #'   `event_date_determined`, and `hazards`.
 #' @param denials FEMA denial records, with `state_name`, `decision`,
-#'   `request_status_date`, `denial_id`, and `denial_hazards`.
-#' @return `denied_pdas` with one row each, plus `denial_id` (`NA` where no
-#'   match was made) and `match_quality`.
+#'   `request_status_date`, `declaration_request_number`, and `denial_hazards`.
+#' @return `denied_pdas` with one row each, plus `declaration_request_number`
+#'   (`NA` where no match was made) and `match_quality`.
 #' @noRd
 match_denied_pdas_to_denials = function(denied_pdas, denials) {
 
@@ -1972,7 +1962,7 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
   ## the full `denials` is kept because the date-only pass below compares event
   ## titles and so needs `declaration_title` as well
   denials_keyed = denials %>%
-    dplyr::select(state_name, decision, request_status_date, denial_id, denial_hazards)
+    dplyr::select(state_name, decision, request_status_date, declaration_request_number, denial_hazards)
 
   ## step 1: exact match on the denial decision date. The relationship is
   ## many-to-many only because two same-state denials can share a decision
@@ -1986,7 +1976,7 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
       shared_hazard_count = shared_hazard_category_count(hazards, denial_hazards),
       hazards_agree = shared_hazard_count > 0,
       match_quality = dplyr::if_else(
-        is.na(denial_id),
+        is.na(declaration_request_number),
         NA_character_,
         "exact: the PDA determination date is the denial decision date"))
 
@@ -2009,16 +1999,16 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
   ## here; step 4 addresses this.
   candidates3 = local({
     remaining = candidates2 %>%
-      dplyr::filter(!is.na(denial_id)) %>%
+      dplyr::filter(!is.na(declaration_request_number)) %>%
       dplyr::select(-candidate_count)
 
     repeat {
       counted = remaining %>% dplyr::add_count(pda_id, name = "candidates_per_pda")
-      claimed_denial_ids = counted %>%
+      claimed_request_numbers = counted %>%
         dplyr::filter(candidates_per_pda == 1) %>%
-        dplyr::pull(denial_id)
+        dplyr::pull(declaration_request_number)
       pruned = counted %>%
-        dplyr::filter(candidates_per_pda == 1 | !denial_id %in% claimed_denial_ids) %>%
+        dplyr::filter(candidates_per_pda == 1 | !declaration_request_number %in% claimed_request_numbers) %>%
         dplyr::select(-candidates_per_pda)
       if (nrow(pruned) == nrow(remaining)) { break }
       remaining = pruned }
@@ -2030,7 +2020,7 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
   ## also claimed by another PDA.
   resolved = candidates3 %>%
     dplyr::add_count(pda_id, name = "candidate_count_resolved") %>%
-    dplyr::add_count(denial_id, name = "pdas_per_denial") %>%
+    dplyr::add_count(declaration_request_number, name = "pdas_per_denial") %>%
     dplyr::mutate(
       match_ok =
         !is.na(match_quality) &
@@ -2043,7 +2033,7 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
   ## single consolidated warning reports.
   matched_exactly = resolved %>%
     dplyr::mutate(
-      denial_id = dplyr::if_else(match_ok, denial_id, NA_character_),
+      declaration_request_number = dplyr::if_else(match_ok, declaration_request_number, NA_character_),
       match_quality = dplyr::if_else(match_ok, match_quality, NA_character_)) %>%
     dplyr::slice_head(n = 1, by = pda_id)
 
@@ -2051,13 +2041,13 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
   ## denial of the same hazard type within a week, in either direction. 
   ## A tie between two equally near denials
   ## leaves two candidates, which the uniqueness test then refuses.
-  claimed_exactly = stats::na.omit(matched_exactly$denial_id)
+  claimed_exactly = stats::na.omit(matched_exactly$declaration_request_number)
 
   matched_fuzzily = matched_exactly %>%
     dplyr::filter(is.na(match_quality)) %>%
     dplyr::select(dplyr::all_of(names(denied_pdas1))) %>%
     dplyr::inner_join(
-      denials %>% dplyr::filter(!denial_id %in% claimed_exactly),
+      denials %>% dplyr::filter(!declaration_request_number %in% claimed_exactly),
       by = dplyr::join_by(state_name, decision),
       relationship = "many-to-many") %>%
     dplyr::mutate(
@@ -2073,7 +2063,7 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
     dplyr::filter(candidate_count == 1) %>%
     dplyr::transmute(
       pda_id,
-      denial_id,
+      declaration_request_number,
       match_quality = stringr::str_c(
         "approximate: no denial shares the PDA determination date, so the ",
         "nearest denial of the same hazard type was used, recorded by FEMA ",
@@ -2083,7 +2073,7 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
   resolved_by_state = matched_exactly %>%
     dplyr::rows_update(matched_fuzzily, by = "pda_id", unmatched = "ignore") %>%
     dplyr::arrange(pda_id) %>%
-    dplyr::select(dplyr::all_of(names(denied_pdas1)), denial_id, match_quality)
+    dplyr::select(dplyr::all_of(names(denied_pdas1)), declaration_request_number, match_quality)
 
   ## step 6: the date alone, without the state. This reaches only the reports the
   ## state-keyed passes never had a candidate for. The denial must be the only unclaimed one in
@@ -2091,7 +2081,7 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
   ## with the report's title, so a same-day denial from an unrelated request
   ## cannot be picked up on the date alone.
   had_state_candidate = candidates1 %>%
-    dplyr::filter(!is.na(denial_id)) %>%
+    dplyr::filter(!is.na(declaration_request_number)) %>%
     dplyr::pull(pda_id) %>%
     unique()
 
@@ -2099,13 +2089,13 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
     dplyr::filter(is.na(match_quality), !pda_id %in% had_state_candidate)
 
   unclaimed = denials %>%
-    dplyr::filter(!denial_id %in% stats::na.omit(resolved_by_state$denial_id))
+    dplyr::filter(!declaration_request_number %in% stats::na.omit(resolved_by_state$declaration_request_number))
 
   matched_by_date = eligible_for_date_only %>%
-    dplyr::select(-denial_id, -match_quality) %>%
+    dplyr::select(-declaration_request_number, -match_quality) %>%
     dplyr::left_join(
       unclaimed %>%
-        dplyr::select(request_status_date, denial_id, declaration_title, denial_hazards),
+        dplyr::select(request_status_date, declaration_request_number, declaration_title, denial_hazards),
       by = dplyr::join_by(event_date_determined == request_status_date),
       relationship = "many-to-many") %>%
     dplyr::add_count(pda_id, name = "candidate_count") %>%
@@ -2113,10 +2103,10 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
       shared_hazard_count = shared_hazard_category_count(hazards, denial_hazards),
       shares_a_word = shared_title_word_count(event_title, declaration_title) > 0,
       match_ok =
-        !is.na(denial_id) &
+        !is.na(declaration_request_number) &
         candidate_count == 1 &
         (dplyr::coalesce(shared_hazard_count > 0, FALSE) | dplyr::coalesce(shares_a_word, FALSE)),
-      denial_id = dplyr::if_else(match_ok, denial_id, NA_character_),
+      declaration_request_number = dplyr::if_else(match_ok, declaration_request_number, NA_character_),
       match_quality = dplyr::if_else(
         match_ok,
         "exact: the only denial in the country sharing the PDA determination date, matched without the state key because the report names none",
@@ -2172,7 +2162,7 @@ shared_title_word_count = function(descriptions_one, descriptions_two) {
 #' Consulted only for reports still unmatched, so a hand-written row can fill a
 #' gap but never displace a match the data itself supports.
 #' 
-#' @param denied_pdas Denied PDA records carrying `denial_id` and
+#' @param denied_pdas Denied PDA records carrying `declaration_request_number` and
 #'   `match_quality` from the automatic passes.
 #' @param denials FEMA denial records.
 #' @return `denied_pdas` with the hand-checked links applied.
@@ -2185,9 +2175,9 @@ apply_manual_pda_denial_links = function(denied_pdas, denials) {
   checked = links %>%
     dplyr::mutate(
       report_exists = pda_file %in% basename(denied_pdas$path),
-      denial_exists = denial_id %in% denials$denial_id,
+      denial_exists = declaration_request_number %in% denials$declaration_request_number,
       denial_claimed =
-        denial_id %in% stats::na.omit(denied_pdas$denial_id),
+        declaration_request_number %in% stats::na.omit(denied_pdas$declaration_request_number),
       report_already_matched = pda_file %in% basename(
         denied_pdas$path[!is.na(denied_pdas$match_quality)]),
       usable = report_exists & denial_exists & !denial_claimed & !report_already_matched)
@@ -2199,7 +2189,7 @@ apply_manual_pda_denial_links = function(denied_pdas, denials) {
         nrow(unusable), " hand-checked PDA-to-denial link(s) could not be ",
         "applied and should be reviewed: ",
         stringr::str_c(
-          unusable$pda_file, " -> ", unusable$denial_id, " (",
+          unusable$pda_file, " -> ", unusable$declaration_request_number, " (",
           dplyr::case_when(
             !unusable$report_exists ~ "no such report in the archive",
             !unusable$denial_exists ~ "FEMA no longer publishes this denial",
@@ -2211,7 +2201,7 @@ apply_manual_pda_denial_links = function(denied_pdas, denials) {
 
   applied = checked %>%
     dplyr::filter(usable) %>%
-    dplyr::select(pda_file, linked_denial_id = denial_id)
+    dplyr::select(pda_file, linked_request_number = declaration_request_number)
 
   if (nrow(applied) == 0) { return(denied_pdas) }
 
@@ -2220,11 +2210,11 @@ apply_manual_pda_denial_links = function(denied_pdas, denials) {
     dplyr::left_join(applied, by = "pda_file", relationship = "many-to-one") %>%
     dplyr::mutate(
       match_quality = dplyr::if_else(
-        is.na(match_quality) & !is.na(linked_denial_id),
+        is.na(match_quality) & !is.na(linked_request_number),
         "manual: linked by hand, because two of the state's requests were decided on the same day and FEMA's record names neither in a way a rule could tie to its report",
         match_quality),
-      denial_id = dplyr::coalesce(denial_id, linked_denial_id)) %>%
-    dplyr::select(-pda_file, -linked_denial_id)
+      declaration_request_number = dplyr::coalesce(declaration_request_number, linked_request_number)) %>%
+    dplyr::select(-pda_file, -linked_request_number)
 }
 
 #' Add the measures derived from a PDA report alone
@@ -2288,9 +2278,13 @@ join_pda_outcomes = function(pda_df) {
       ask_before_call = FALSE) %>%
     janitor::clean_names() %>%
     ## the source returns one row per designated area, usually a county, so a
-    ## single declaration appears many times
-    dplyr::distinct(fema_declaration_string, .keep_all = TRUE) %>%
+    ## single request appears many times
+    dplyr::distinct(declaration_request_number, .keep_all = TRUE) %>%
     dplyr::transmute(
+      ## FEMA's own identifier for the request, assigned whether or not the
+      ## request was granted. It is the only field the declarations and the
+      ## denials records share that identifies a request uniquely across both.
+      declaration_request_number = as.character(declaration_request_number),
       disaster_number = as.character(disaster_number),
       state,
       declaration_date = lubridate::as_date(declaration_date),
@@ -2320,6 +2314,11 @@ join_pda_outcomes = function(pda_df) {
       stringr::str_to_lower(current_request_status) %in% c("denial", "turndown"),
       declaration_request_type == "Major Disaster") %>%
     dplyr::transmute(
+      ## A denied request never receives a disaster number, so FEMA's request
+      ## number is the only identifier it carries. It is what a denial is keyed
+      ## on here: for the match to a PDA report, for the hand-checked links, and
+      ## in the returned data.
+      declaration_request_number = as.character(declaration_request_number),
       ## the denial records spell a place differently than the declaration
       ## records do ("Virgin Islands of the U.S." against "VI"), so both are
       ## put into the one spelling `state_reference()` holds
@@ -2344,18 +2343,7 @@ join_pda_outcomes = function(pda_df) {
       denial_hazards = extract_hazard_categories(stringr::str_c(
         dplyr::coalesce(declaration_title, ""),
         dplyr::coalesce(requested_incident_types, ""),
-        sep = " ")),
-      ## the record has no disaster number, so this identifies a denial for the
-      ## match and makes a denial claimed by two PDAs detectable
-      denial_id = stringr::str_c(
-        state_name, request_status_date,
-        dplyr::coalesce(declaration_title, "unnamed"),
-        sep = " | ")) %>%
-    ## FEMA publishes a small number of denials twice, as rows identical in
-    ## every field (one West Virginia request as of this writing). Keeping both
-    ## would return two universe rows for one request and attach the same PDA
-    ## report to each of them.
-    dplyr::distinct(denial_id, .keep_all = TRUE)
+        sep = " ")))
 
   ## `decision`, `cost_estimate_ia_pa_total` and `pa_threshold_ratio` arrive
   ## already computed, from `add_pda_summary_measures()`, so that the
@@ -2412,12 +2400,11 @@ join_pda_outcomes = function(pda_df) {
   joined_denied = denials %>%
     tidylog::left_join(
       pdas_denied %>%
-        dplyr::filter(!is.na(denial_id)) %>%
+        dplyr::filter(!is.na(declaration_request_number)) %>%
         dplyr::select(
           -state_name, -dplyr::any_of("state_fips"), -decision, -disaster_number),
-      by = "denial_id",
+      by = "declaration_request_number",
       relationship = "many-to-one") %>%
-    dplyr::select(-denial_id) %>%
     ## FEMA's own date the request was turned down: the counterpart of
     ## `declaration_date` for a denied request, and the field every denial match
     ## is keyed on. 
@@ -2456,6 +2443,7 @@ join_pda_outcomes = function(pda_df) {
       fema_decision_year = lubridate::year(fema_decision_date)) %>%
     dplyr::select(-declaration_date, -denial_date) %>%
     dplyr::rename(
+      fema_declaration_request_number = declaration_request_number,
       fema_disaster_number = disaster_number,
       fema_state_name = state_name,
       fema_state_fips = state_fips,
@@ -2497,6 +2485,7 @@ join_pda_outcomes = function(pda_df) {
         TRUE ~ stringr::str_c(pda_warnings, "; ", tribal_mismatch_text))) %>%
     dplyr::select(-tribal_mismatch, -tribal_mismatch_text) %>%
     dplyr::select(
+      fema_declaration_request_number,
       fema_disaster_number, fema_state_name, fema_state_fips, fema_decision,
       fema_decision_date,
       fema_decision_year, fema_declaration_request_date, fema_declaration_title,
@@ -2564,7 +2553,8 @@ join_pda_outcomes = function(pda_df) {
 #'   `fema_` for FEMA's own declaration and denial records, `pda_` for values
 #'   read out of the PDF reports. A column keeps the same name under either
 #'   setting. When `join_outcomes = FALSE`, the columns describing the FEMA
-#'   record or the match to it -- `fema_disaster_number`, `fema_state_name`,
+#'   record or the match to it -- `fema_declaration_request_number`,
+#'   `fema_disaster_number`, `fema_state_name`,
 #'   `fema_state_fips`, `fema_decision`,
 #'   `fema_decision_date`, `fema_decision_year`, `fema_declaration_request_date`,
 #'   `fema_declaration_title`, `fema_requested_incident_types`, `fema_hazards`,
@@ -2577,6 +2567,14 @@ join_pda_outcomes = function(pda_df) {
 #'   for a joined record).
 #'   Columns include:
 #'   \describe{
+#'     \item{fema_declaration_request_number}{FEMA's own identifier for the
+#'        declaration request, and the unique key of the returned data. It is
+#'        never missing and never shared by two records, for approvals and
+#'        denials alike, so it is the field to key an analysis on and the one to
+#'        join other datasets by. `fema_disaster_number` identifies an approval
+#'        just as well but is always NA on a denial. This column is absent when
+#'        `join_outcomes = FALSE`, since it comes from FEMA's records rather
+#'        than from a report; `pda_path` is the key of that output.}
 #'     \item{fema_disaster_number}{FEMA disaster number. Denied requests are always NA.}
 #'     \item{fema_state_name}{The requesting state or territory. A tribal request carries
 #'        the state the tribe's lands lie in, as recorded by FEMA.}
@@ -2640,10 +2638,6 @@ join_pda_outcomes = function(pda_df) {
 #'        each with its own county FIPS code and per capita impact.}
 #'     \item{pda_pa_per_capita_impact_indicator_countywide}{FEMA's statutory countywide per capita
 #'        threshold in dollars.}
-#'     \item{pda_pa_per_capita_impact_countywide_max}{Maximum countywide per capita impact ratio parsed
-#'        from `pa_per_capita_impact_countywide`.}
-#'     \item{pda_pa_per_capita_impact_countywide_min}{Minimum countywide per capita impact ratio parsed
-#'        from `pa_per_capita_impact_countywide`.}
 #'     \item{pda_pa_threshold_ratio}{`pa_per_capita_impact_statewide` divided by
 #'        `pa_per_capita_impact_indicator_statewide`: the estimated per capita damage expressed as
 #'        a multiple of the statutory threshold; a value above 1 indicates damages exceeded the threshold.}
@@ -2841,14 +2835,14 @@ utils::globalVariables(c(
   "first_date_match_string", "disaster_number_filename", "parser_version",
   "uses_tribal_layout", "filename_lower", "ia_cost_estimate_total",
   "ia_residences_insured_total_percent", "pa_per_capita_impact_countywide",
-  "pa_per_capita_impact_countywide_1",
   "pa_per_capita_impact_indicator_countywide",
   "pa_per_capita_impact_indicator_statewide", "pa_primary_impact",
   "base_name", "base_name_count", "needs_hash", "destination_file", "status",
-  "share_missing", "state_name", "hazards", "denial_hazards", "denial_id",
+  "share_missing", "state_name", "hazards", "denial_hazards",
   "request_status_date", "declaration_request_date", "declaration_title",
   "requested_incident_types", "current_request_status",
-  "declaration_request_type", "incident_name", "fema_declaration_string",
+  "declaration_request_type", "incident_name",
+  "declaration_request_number", "fema_declaration_request_number",
   "declaration_date", "decision", "state", "path", "pda_id",
   "fema_disaster_number", "fema_state_name", "fema_decision",
   "fema_decision_date", "fema_decision_year", "fema_declaration_request_date",
@@ -2874,4 +2868,4 @@ utils::globalVariables(c(
   "source_value", "imputed_value",
   "reports_stating_value", "can_impute", "pda_file", "report_exists",
   "denial_exists", "denial_claimed", "report_already_matched", "usable",
-  "linked_denial_id", "shares_a_word"))
+  "linked_request_number", "shares_a_word"))
