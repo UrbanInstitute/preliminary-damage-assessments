@@ -48,13 +48,13 @@ test_that("shared hazard counts distinguish partial from complete disagreement",
 test_that("the hand-checked denial links are well formed", {
   links <- manual_pda_denial_links()
 
-  expect_named(links, c("pda_file", "denial_id", "note"))
+  expect_named(links, c("pda_file", "declaration_request_number", "note"))
   ## a report may be linked once and a denial claimed once, or the table
   ## itself would create the ambiguity it exists to resolve
   expect_equal(anyDuplicated(links$pda_file), 0)
-  expect_equal(anyDuplicated(links$denial_id), 0)
-  ## the denial identifier is "state | date | FEMA's incident name"
-  expect_true(all(stringr::str_detect(links$denial_id, "^.+ \\| \\d{4}-\\d{2}-\\d{2} \\| .+$")))
+  expect_equal(anyDuplicated(links$declaration_request_number), 0)
+  ## a link is recorded as FEMA's own declaration request number
+  expect_true(all(stringr::str_detect(links$declaration_request_number, "^[0-9]+$")))
   expect_true(all(nchar(links$note) > 0))
 })
 

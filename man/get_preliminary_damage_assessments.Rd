@@ -38,7 +38,8 @@ Every column name carries a prefix saying where its value came from:
 \code{fema_} for FEMA's own declaration and denial records, \code{pda_} for values
 read out of the PDF reports. A column keeps the same name under either
 setting. When \code{join_outcomes = FALSE}, the columns describing the FEMA
-record or the match to it -- \code{fema_disaster_number}, \code{fema_state_name},
+record or the match to it -- \code{fema_declaration_request_number},
+\code{fema_disaster_number}, \code{fema_state_name},
 \code{fema_state_fips}, \code{fema_decision},
 \code{fema_decision_date}, \code{fema_decision_year}, \code{fema_declaration_request_date},
 \code{fema_declaration_title}, \code{fema_requested_incident_types}, \code{fema_hazards},
@@ -51,6 +52,14 @@ disaster number the report itself prints, and \code{pda_state_name} and
 for a joined record).
 Columns include:
 \describe{
+\item{fema_declaration_request_number}{FEMA's own identifier for the
+declaration request, and the unique key of the returned data. It is
+never missing and never shared by two records, for approvals and
+denials alike, so it is the field to key an analysis on and the one to
+join other datasets by. \code{fema_disaster_number} identifies an approval
+just as well but is always NA on a denial. This column is absent when
+\code{join_outcomes = FALSE}, since it comes from FEMA's records rather
+than from a report; \code{pda_path} is the key of that output.}
 \item{fema_disaster_number}{FEMA disaster number. Denied requests are always NA.}
 \item{fema_state_name}{The requesting state or territory. A tribal request carries
 the state the tribe's lands lie in, as recorded by FEMA.}
@@ -114,10 +123,6 @@ Pass the data to \code{\link[=transform_pda_counties]{transform_pda_counties()}}
 each with its own county FIPS code and per capita impact.}
 \item{pda_pa_per_capita_impact_indicator_countywide}{FEMA's statutory countywide per capita
 threshold in dollars.}
-\item{pda_pa_per_capita_impact_countywide_max}{Maximum countywide per capita impact ratio parsed
-from \code{pa_per_capita_impact_countywide}.}
-\item{pda_pa_per_capita_impact_countywide_min}{Minimum countywide per capita impact ratio parsed
-from \code{pa_per_capita_impact_countywide}.}
 \item{pda_pa_threshold_ratio}{\code{pa_per_capita_impact_statewide} divided by
 \code{pa_per_capita_impact_indicator_statewide}: the estimated per capita damage expressed as
 a multiple of the statutory threshold; a value above 1 indicates damages exceeded the threshold.}

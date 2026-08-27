@@ -12,10 +12,10 @@ denied_pda_fixture <- function(...) {
 
 denial_fixture <- function(...) {
   tibble::tibble(decision = "Denied", ...) %>%
+    ## FEMA's own request number identifies a denial, so the fixture hands out
+    ## one per row rather than building a key out of the other fields
     dplyr::mutate(
-      denial_id = stringr::str_c(
-        dplyr::coalesce(state_name, "none"), request_status_date,
-        declaration_title, sep = " | "))
+      declaration_request_number = as.character(24000 + dplyr::row_number()))
 }
 
 test_that("a unique same-day denial is matched exactly", {
@@ -33,7 +33,7 @@ test_that("a unique same-day denial is matched exactly", {
 
   matched <- suppressWarnings(match_denied_pdas_to_denials(pdas, denials))
 
-  expect_equal(matched$denial_id, denials$denial_id)
+  expect_equal(matched$declaration_request_number, denials$declaration_request_number)
   expect_match(matched$match_quality, "^exact")
 })
 
@@ -52,7 +52,7 @@ test_that("two same-day denials in one state are separated by hazard", {
 
   matched <- suppressWarnings(match_denied_pdas_to_denials(pdas, denials))
 
-  expect_equal(matched$denial_id, denials$denial_id[2])
+  expect_equal(matched$declaration_request_number, denials$declaration_request_number[2])
 })
 
 test_that("two same-day denials that hazard cannot separate stay unmatched", {
@@ -71,7 +71,7 @@ test_that("two same-day denials that hazard cannot separate stay unmatched", {
   matched <- suppressWarnings(match_denied_pdas_to_denials(pdas, denials))
 
   expect_equal(nrow(matched), 1)
-  expect_true(is.na(matched$denial_id))
+  expect_true(is.na(matched$declaration_request_number))
   expect_true(is.na(matched$match_quality))
 })
 
@@ -90,7 +90,7 @@ test_that("with no same-day denial, the nearest same-hazard one within a week is
 
   matched <- suppressWarnings(match_denied_pdas_to_denials(pdas, denials))
 
-  expect_equal(matched$denial_id, denials$denial_id)
+  expect_equal(matched$declaration_request_number, denials$declaration_request_number)
   expect_match(matched$match_quality, "^approximate")
   expect_match(matched$match_quality, "3 day\\(s\\) earlier")
 })
@@ -110,7 +110,7 @@ test_that("a nearby denial of a different hazard is refused", {
 
   matched <- suppressWarnings(match_denied_pdas_to_denials(pdas, denials))
 
-  expect_true(is.na(matched$denial_id))
+  expect_true(is.na(matched$declaration_request_number))
 })
 
 test_that("a report naming no state is matched on the date alone when unambiguous", {
@@ -131,7 +131,7 @@ test_that("a report naming no state is matched on the date alone when unambiguou
 
   matched <- suppressWarnings(match_denied_pdas_to_denials(pdas, denials))
 
-  expect_equal(matched$denial_id, denials$denial_id[1])
+  expect_equal(matched$declaration_request_number, denials$declaration_request_number[1])
   expect_match(matched$match_quality, "without the state key")
 })
 
@@ -150,5 +150,5 @@ test_that("the date-only pass declines when two denials share the date", {
 
   matched <- suppressWarnings(match_denied_pdas_to_denials(pdas, denials))
 
-  expect_true(is.na(matched$denial_id))
+  expect_true(is.na(matched$declaration_request_number))
 })

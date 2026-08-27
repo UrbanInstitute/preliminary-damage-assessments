@@ -29,7 +29,7 @@ set_urbn_defaults(style = "print")
 options(scipen = 999)
 ```
 
-## Disclaimer
+## Data disclaimer
 
 The structured data returned by this package are created by extracting values
 from PDF reports. This process is inherently imprecise, and it is likely that
@@ -90,7 +90,7 @@ from the authoritative FEMA datasets as defining the universe of declarations,
 and we map PDAs back to this universe so that we can better understand the 
 relationships between preliminary damages and disaster declaration decisionmaking. 
 
-## PDA Data Preparation
+## Data preparation
 
 The package provides three functions for accessing PDA data: 
 
@@ -110,8 +110,12 @@ The package provides three functions for accessing PDA data:
   datasets of declaration request approvals and denials.
 - `transform_pda_counties()` restructures the request-level data from `get_preliminary_damage_assessments()`
   into a county-request structured dataset. While requests originate from STT governments, they 
-  delineate specific counties--both estimated costs per county, and the programs (PA and IA) that
-  are requested to be made available for each county. 
+  delineate specific counties---both estimated costs per county, and the programs (PA and IA) that
+  are requested for each county. `pda_county_indicator` and `fema_county_indicator` record which 
+  source named each county. When a request has no county-level information, the county columns are `NA`. 
+  For statewide requests, a record is returned for each county in the state, even when counties are not
+  named individually. Every county row carries `fema_declaration_request_number`, FEMA's own
+  identifier for the request, so county-level results can be grouped or joined back to their event.
 
 ```{r load-pdas, eval = FALSE}
 ## run this to update (or create for the first time) the local 
@@ -157,12 +161,7 @@ contributions from the PDAs.
 One of the primary factors intended to determine whether PA is declared is whether the estimated 
 per-capita damages (in dollars), per person, across the entire STT government, 
 exceed an established per-capita threshold or indicator, known as the (statewide) 
-Per Capita Impact (PCI) indicator. 
-
-In 2026, this PCI is $1.94. There is also a separate PCI at the county level, which accounts 
-for the fact that disaster damages could be concentrated in a subset of counties and warrant a 
-declaration for one or more counties, even if total damages do not meet the statewide PCI and 
-a statewide disaster declaration may not be appropriate. The countywide PCI in 2026 is $4.86.
+Per Capita Impact (PCI) indicator. In 2026, this PCI is $1.94. 
 
 (Because published PDAs are only available from ~2008 onward, we restrict the data 
 to that window.)
@@ -186,6 +185,65 @@ pdas %>%
           "Ratio of Public Assistance per-capita damages relative to the statewide ",  
           "per-capita indicator, logged") %>% str_wrap(100),
       x = "",  y = "")
+```
+
+There is also a separate PCI at the county level, which accounts for the fact that disaster damages 
+could be concentrated in a subset of counties and warrant a declaration for one or more counties, 
+even if total damages do not meet the statewide PCI and a statewide disaster declaration may not be 
+appropriate. The countywide PCI in 2026 is $4.86.
+
+```{r}
+county_pdas = pdas %>% transform_pda_counties()
+
+county_impacts = county_pdas %>%
+  add_count(fema_disaster_number) %>%
+  filter(n > 1, pda_pa_requested == 1) %>%
+  filter(.by = fema_disaster_number, !(all(is.na(pda_pa_per_capita_impact_county)))) %>%
+  mutate(
+    .by = fema_disaster_number, 
+    county_pci_mean = mean(pda_pa_per_capita_impact_county, na.rm = TRUE),
+    county_pci_sd = sd(pda_pa_per_capita_impact_county, na.rm = TRUE))
+
+county_impacts %>%
+  filter(fema_decision_year > 2010, fema_decision == "Denied") %>%
+  mutate(
+    pda_pa_pci_county_ratio = pda_pa_per_capita_impact_county / pda_pa_per_capita_impact_indicator_countywide,
+    pda_pa_pci_county_ratio_logged = log(pda_pa_pci_county_ratio)) %>%
+  mutate(
+    .by = fema_declaration_request_number,
+    county_pci_min = min(pda_pa_pci_county_ratio_logged, na.rm = TRUE),
+    county_pci_max = max(pda_pa_pci_county_ratio_logged, na.rm = TRUE)) %>%
+  filter(
+    if_all(
+      .cols = c(pda_pa_pci_county_ratio_logged, county_pci_min, county_pci_max),
+      .fns = ~ !is.na(.x) & !is.infinite(.x))) %>%
+  ggplot(aes(
+    x = fema_declaration_request_number, 
+    color = pda_pa_pci_county_ratio_logged > 0)) +
+    geom_point(aes(y = pda_pa_pci_county_ratio_logged), alpha = .3) +
+    geom_errorbar(
+      data = . %>% distinct(fema_declaration_request_number, .keep_all = TRUE), 
+      aes(x = fema_declaration_request_number, ymin = county_pci_min, ymax = county_pci_max),
+      color = "grey",
+      alpha = .5) +
+    annotate(
+      "text", x = 45, y = 2.75, hjust = 1,
+      label = str_wrap("Counties above zero exceed the per-capita threshold", 25)) +
+    annotate(
+      "curve", x = 44, y = 2.1, xend = 45, yend = 0.1, curvature = -0.35,
+      arrow = arrow(length = unit(0.02, "npc"), type = "closed")) +
+    labs(
+      x = "", y = "", 
+      title = "Most denials include many counties that exceed the per-capita impact threshold",
+      subtitle = str_c(
+        "County-level per-capita impacts, logged, for denied declaration requests, 2010-2026.\n",
+        "Points represent counties, which are aligned vertically per declaration request.")) +
+    coord_cartesian(clip = "off") +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(), 
+      axis.ticks.x = element_blank(), 
+      axis.line.x = element_blank())
 ```
 
 ## Use of Generative AI

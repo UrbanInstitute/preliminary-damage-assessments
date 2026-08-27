@@ -2,45 +2,106 @@
 % Please edit documentation in R/transform_pda_counties.R
 \name{transform_pda_counties}
 \alias{transform_pda_counties}
-\title{Split the county listing in a PDA report into one row per county-request}
+\title{Return one row per record-county for every PDA record}
 \usage{
-transform_pda_counties(pda_df)
+transform_pda_counties(pda_df, declaration_areas = fetch_declaration_areas())
 }
 \arguments{
 \item{pda_df}{A dataframe returned by \code{\link[=get_preliminary_damage_assessments]{get_preliminary_damage_assessments()}}.}
+
+\item{declaration_areas}{A dataframe of FEMA's designated areas, one row per
+declaration-area, with the columns \code{fetch_declaration_areas()} returns. The
+default fetches them from FEMA, so this function needs a network connection
+whenever \code{pda_df} carries a disaster number column; pass a dataframe to
+supply them from elsewhere.}
 }
 \value{
-\code{pda_df} with one row per report-county, and these columns added:
+\code{pda_df} with one row per record-county, and these columns added:
 \describe{
 \item{pda_county_name}{The county's name as the Census Bureau spells it, or,
-where the name could not be matched, the name as the report printed it.}
+where the name could not be matched, the name as the report printed it.
+\code{NA} on a row with no county at all.}
 \item{pda_county_name_reported}{The name exactly as the report printed it,
-kept so that a failed match can be checked against the source.}
+kept so that a failed match can be checked against the source. \code{NA} on
+a row that did not come from a county listing.}
 \item{pda_county_geoid}{Five-digit county FIPS code, \code{NA} where the place has
 no county code or its name could not be matched.}
 \item{pda_geography_type}{What kind of place the row describes: "county",
 "parish", "borough", "census area", "municipality", "municipio",
 "island", "independent city", "education area", "tribal entity", or
 "unrecognized" where the name matched nothing and resembles none of
-these.}
+these. \code{NA} on a row with no county at all.}
 \item{pda_pa_per_capita_impact_county}{The county's per capita impact in
-dollars, as printed.}
+dollars, as printed. \code{NA} on a row that did not come from a county
+listing.}
+\item{pda_county_indicator}{\code{TRUE} where the report's own county listing named this
+county.}
+\item{fema_county_indicator}{\code{TRUE} where FEMA's designated areas for the
+declaration named this county.}
+\item{fema_statewide_request}{\code{TRUE} where the row came from expanding a
+statewide designation rather than from a county FEMA named
+individually.}
+\item{fema_designated_area}{The name FEMA gave the designated area, kept
+so that tribal lands and other non-county designations stay
+identifiable. Where more than one designated area falls inside one
+county, the names are semicolon-separated.}
+\item{fema_ihp_declared_county, fema_ia_declared_county,
+fema_pa_declared_county, fema_hm_declared_county}{FEMA's record of the
+programs turned on for this designated area.}
 }
+Where a request-level column has a county-level counterpart, only the
+county-level one is returned: \code{pda_pa_per_capita_impact_countywide}, the
+raw text of the county listing, is dropped in favor of
+\code{pda_pa_per_capita_impact_county}, and the declaration-level
+\code{fema_ihp_declared}, \code{fema_ia_declared}, \code{fema_pa_declared}, and
+\code{fema_hm_declared} are dropped in favor of their \verb{_county} versions.
 Problems found with a row are appended to the existing \code{pda_warnings}
 column, semicolon-separated, alongside any the request-level record
 already carried.
 }
 \description{
-\code{get_preliminary_damage_assessments()} returns one observation per request,
-but county-level per-capita impacts are specified in many PDAs as a single,
-comma-separated string. This function splits that text into one row per county-request,
-including a county FIPS code and the county's estimated per-capita impact.
+\code{get_preliminary_damage_assessments()} returns one observation per request.
+This function returns one observation per request-county, drawing the county
+detail from two sources: the comma-separated county listing that many PDA
+reports print, and FEMA's own record of the areas a declaration designated.
+Every record passed in is represented in the output. A record with neither
+source of county detail--a denial with no matched report, a tribal
+request--keeps a single row with the county columns empty.
 }
-\section{What the county listing covers}{
-Only reports that requested Public Assistance and printed a countywide
-breakdown carry a listing--roughly two thirds of all PDAs. Tribal-led requests
-never delineate counties, and they are not returned by this function, akin to
-other reports with no county-level listings.
+\section{Where the county rows come from}{
+Two columns record which source named a county, and a county named by both
+is one row with both columns \code{TRUE} rather than two rows:
+\itemize{
+\item \code{pda_county_indicator} is \code{TRUE} when the county appeared in the report's own county
+listing. Only reports that requested Public Assistance and printed a
+countywide breakdown carry a listing--roughly two thirds of all PDAs.
+\item \code{fema_county_indicator} is \code{TRUE} when the county appeared in FEMA's designated areas
+for the declaration, including when it arrived through a statewide
+designation. Only approvals have designated areas; a denial never receives
+a disaster number and so has none.
+}
+
+These two are distinct from \code{pda_county_name}, \code{pda_county_geoid}, and
+\code{pda_county_name_reported}, which say what the county is rather than whether
+the PDA listing named it.
+
+Because a declaration designates about twenty counties on average, and a
+statewide designation expands to every county in the state, this function
+returns many times more rows than the request-level dataset it is given--tens
+of thousands of county rows for the full archive.
+}
+
+\section{Statewide designations and the vintage of the county list}{
+A designated area that FEMA names "Statewide" covers the whole state rather
+than one county, and is expanded into one row per county in that state, each
+with \code{fema_statewide_request} set to \code{TRUE}. The counties used for that
+expansion come from a single recent vintage of \code{tidycensus::fips_codes},
+applied to every year of the archive. For statewide requests, therefore, the
+county-level observations may differ slightly from the counties that actually
+existed at the time of the declaration. Connecticut is the clearest case: a
+statewide Connecticut declaration from 2011 comes back as the nine planning
+regions that replaced the state's counties in 2022, not as the eight counties
+that existed on the day of the declaration.
 }
 
 \section{Places that are not counties}{
@@ -49,7 +110,9 @@ Louisiana parishes, Alaska boroughs and census areas, Virginia and Missouri
 independent cities, Puerto Rico municipios. Tribal nations are included
 when they are subrecipients on state-led requests, as are Alaskan Regional Education
 Attendance Areas, though neither have county FIPS codes. \code{geography_type} provides these
-details.
+details. FEMA's designated areas name tribal lands and other non-county
+places the same way; those rows keep the name FEMA gave them in
+\code{fema_designated_area} and carry no county code.
 }
 
 \section{Values of zero}{
@@ -59,12 +122,25 @@ The value is preserved as printed and the row is flagged in the warnings column
 so that zeros can be excluded as appropriate.
 }
 
+\section{Identifying an event}{
+Every column of the request-level record is repeated down that record's
+county rows, so \code{fema_declaration_request_number} -- FEMA's own identifier
+for the declaration request, never missing for an approval or a denial --
+still names the event each row belongs to. Group by
+\code{fema_declaration_request_number} to get back to one row per event.
+
+That column and \code{pda_county_geoid} together are the uniqueness key of the
+returned data, with two exceptions: the repeated county listing described
+below, and rows that have no county code at all, where several designated
+areas under one event -- two reservations, say -- are separate rows told
+apart by \code{fema_designated_area}.
+}
+
 \section{Counties listed twice}{
 A few reports cover two separate incidents and print the whole county list
 once for each, giving a different per capita figure each time. Both figures
 are returned as separate rows, since neither supersedes the other, and both
-rows are flagged in the warnings column. The report and county together are
-therefore not inherently a unique key (though in most cases they are).
+rows are flagged in the warnings column.
 }
 
 \examples{
