@@ -7,5 +7,4 @@
 - [`get_preliminary_damage_assessments()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/get_preliminary_damage_assessments.md)
   : Get FEMA Preliminary Damage Assessments Report Data
 - [`transform_pda_counties()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/transform_pda_counties.md)
-  : Split the county listing in a PDA report into one row per
-  county-request
+  : Return one row per record-county for every PDA record

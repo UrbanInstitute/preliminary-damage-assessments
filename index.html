@@ -50,7 +50,7 @@
 <div class="page-header"><h1 id="preliminary-damage-assessments-for-presidential-disaster-declaration-requests">Preliminary Damage Assessments for Presidential Disaster Declaration Requests<a class="anchor" aria-label="anchor" href="#preliminary-damage-assessments-for-presidential-disaster-declaration-requests"></a>
 </h1></div>
 <div class="section level2">
-<h2 id="disclaimer">Disclaimer<a class="anchor" aria-label="anchor" href="#disclaimer"></a>
+<h2 id="data-disclaimer">Data disclaimer<a class="anchor" aria-label="anchor" href="#data-disclaimer"></a>
 </h2>
 <p>The structured data returned by this package are created by extracting values from PDF reports. This process is inherently imprecise, and it is likely that some values in the structured data are incorrect relative to the source PDFs. We have taken significant steps to mitigate the prevalence of such errors through both manual spot-checking and programmatic testing, but users should take this into account if they choose to use these data.</p>
 </div>
@@ -106,7 +106,7 @@
 <p>The two FEMA datasets are <em>authoritative</em>: they are FEMA’s own structured records of which declaration requests were approved and denied. The PDAs, by contrast, are text-extracted from unstructured PDFs and carry the caveats described in <code><a href="reference/get_preliminary_damage_assessments.html">?get_preliminary_damage_assessments</a></code>. We treat observations from the authoritative FEMA datasets as defining the universe of declarations, and we map PDAs back to this universe so that we can better understand the relationships between preliminary damages and disaster declaration decisionmaking.</p>
 </div>
 <div class="section level2">
-<h2 id="pda-data-preparation">PDA Data Preparation<a class="anchor" aria-label="anchor" href="#pda-data-preparation"></a>
+<h2 id="data-preparation">Data preparation<a class="anchor" aria-label="anchor" href="#data-preparation"></a>
 </h2>
 <p>The package provides three functions for accessing PDA data:</p>
 <ul>
@@ -115,7 +115,7 @@
 <li>
 <code><a href="reference/get_preliminary_damage_assessments.html">get_preliminary_damage_assessments()</a></code> walks the user’s specified directory and extracts structured attributes from each PDA report, compiling data from all reports in the directory into a consistent dataset, and joining PDA attributes back to the authoritative FEMA-published datasets of declaration request approvals and denials.</li>
 <li>
-<code><a href="reference/transform_pda_counties.html">transform_pda_counties()</a></code> restructures the request-level data from <code><a href="reference/get_preliminary_damage_assessments.html">get_preliminary_damage_assessments()</a></code> into a county-request structured dataset. While requests originate from STT governments, they delineate specific counties–both estimated costs per county, and the programs (PA and IA) that are requested to be made available for each county.</li>
+<code><a href="reference/transform_pda_counties.html">transform_pda_counties()</a></code> restructures the request-level data from <code><a href="reference/get_preliminary_damage_assessments.html">get_preliminary_damage_assessments()</a></code> into a county-request structured dataset. While requests originate from STT governments, they delineate specific counties—both estimated costs per county, and the programs (PA and IA) that are requested for each county. <code>pda_county_indicator</code> and <code>fema_county_indicator</code> record which source named each county. When a request has no county-level information, the county columns are <code>NA</code>. For statewide requests, a record is returned for each county in the state, even when counties are not named individually. Every county row carries <code>fema_declaration_request_number</code>, FEMA’s own identifier for the request, so county-level results can be grouped or joined back to their event.</li>
 </ul>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co">## run this to update (or create for the first time) the local </span></span>
@@ -151,8 +151,7 @@
 <span>    y <span class="op">=</span> <span class="st">""</span><span class="op">)</span></span></code></pre></div>
 <p><img src="reference/figures/README-declarations-over-time-1.png"><!-- --></p>
 <p>But access to systematic information on damages and housing impacts are the novel contributions from the PDAs.</p>
-<p>One of the primary factors intended to determine whether PA is declared is whether the estimated per-capita damages (in dollars), per person, across the entire STT government, exceed an established per-capita threshold or indicator, known as the (statewide) Per Capita Impact (PCI) indicator.</p>
-<p>In 2026, this PCI is $1.94. There is also a separate PCI at the county level, which accounts for the fact that disaster damages could be concentrated in a subset of counties and warrant a declaration for one or more counties, even if total damages do not meet the statewide PCI and a statewide disaster declaration may not be appropriate. The countywide PCI in 2026 is $4.86.</p>
+<p>One of the primary factors intended to determine whether PA is declared is whether the estimated per-capita damages (in dollars), per person, across the entire STT government, exceed an established per-capita threshold or indicator, known as the (statewide) Per Capita Impact (PCI) indicator. In 2026, this PCI is $1.94.</p>
 <p>(Because published PDAs are only available from ~2008 onward, we restrict the data to that window.)</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pdas</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
@@ -174,6 +173,60 @@
 <span>          <span class="st">"per-capita indicator, logged"</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span> <span class="fu">str_wrap</span><span class="op">(</span><span class="fl">100</span><span class="op">)</span>,</span>
 <span>      x <span class="op">=</span> <span class="st">""</span>,  y <span class="op">=</span> <span class="st">""</span><span class="op">)</span></span></code></pre></div>
 <p><img src="reference/figures/README-pa-threshold-ratio-1.png"><!-- --></p>
+<p>There is also a separate PCI at the county level, which accounts for the fact that disaster damages could be concentrated in a subset of counties and warrant a declaration for one or more counties, even if total damages do not meet the statewide PCI and a statewide disaster declaration may not be appropriate. The countywide PCI in 2026 is $4.86.</p>
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">county_pdas</span> <span class="op">=</span> <span class="va">pdas</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span> <span class="fu"><a href="reference/transform_pda_counties.html">transform_pda_counties</a></span><span class="op">(</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">county_impacts</span> <span class="op">=</span> <span class="va">county_pdas</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu">add_count</span><span class="op">(</span><span class="va">fema_disaster_number</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu"><a href="https://rdrr.io/r/stats/filter.html" class="external-link">filter</a></span><span class="op">(</span><span class="va">n</span> <span class="op">&gt;</span> <span class="fl">1</span>, <span class="va">pda_pa_requested</span> <span class="op">==</span> <span class="fl">1</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu"><a href="https://rdrr.io/r/stats/filter.html" class="external-link">filter</a></span><span class="op">(</span>.by <span class="op">=</span> <span class="va">fema_disaster_number</span>, <span class="op">!</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/all.html" class="external-link">all</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/NA.html" class="external-link">is.na</a></span><span class="op">(</span><span class="va">pda_pa_per_capita_impact_county</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu">mutate</span><span class="op">(</span></span>
+<span>    .by <span class="op">=</span> <span class="va">fema_disaster_number</span>, </span>
+<span>    county_pci_mean <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/mean.html" class="external-link">mean</a></span><span class="op">(</span><span class="va">pda_pa_per_capita_impact_county</span>, na.rm <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span>,</span>
+<span>    county_pci_sd <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/stats/sd.html" class="external-link">sd</a></span><span class="op">(</span><span class="va">pda_pa_per_capita_impact_county</span>, na.rm <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">county_impacts</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu"><a href="https://rdrr.io/r/stats/filter.html" class="external-link">filter</a></span><span class="op">(</span><span class="va">fema_decision_year</span> <span class="op">&gt;</span> <span class="fl">2010</span>, <span class="va">fema_decision</span> <span class="op">==</span> <span class="st">"Denied"</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu">mutate</span><span class="op">(</span></span>
+<span>    pda_pa_pci_county_ratio <span class="op">=</span> <span class="va">pda_pa_per_capita_impact_county</span> <span class="op">/</span> <span class="va">pda_pa_per_capita_impact_indicator_countywide</span>,</span>
+<span>    pda_pa_pci_county_ratio_logged <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Log.html" class="external-link">log</a></span><span class="op">(</span><span class="va">pda_pa_pci_county_ratio</span><span class="op">)</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu">mutate</span><span class="op">(</span></span>
+<span>    .by <span class="op">=</span> <span class="va">fema_declaration_request_number</span>,</span>
+<span>    county_pci_min <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">min</a></span><span class="op">(</span><span class="va">pda_pa_pci_county_ratio_logged</span>, na.rm <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span>,</span>
+<span>    county_pci_max <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="va">pda_pa_pci_county_ratio_logged</span>, na.rm <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu"><a href="https://rdrr.io/r/stats/filter.html" class="external-link">filter</a></span><span class="op">(</span></span>
+<span>    <span class="fu">if_all</span><span class="op">(</span></span>
+<span>      .cols <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="va">pda_pa_pci_county_ratio_logged</span>, <span class="va">county_pci_min</span>, <span class="va">county_pci_max</span><span class="op">)</span>,</span>
+<span>      .fns <span class="op">=</span> <span class="op">~</span> <span class="op">!</span><span class="fu"><a href="https://rdrr.io/r/base/NA.html" class="external-link">is.na</a></span><span class="op">(</span><span class="va">.x</span><span class="op">)</span> <span class="op">&amp;</span> <span class="op">!</span><span class="fu"><a href="https://rdrr.io/r/base/is.finite.html" class="external-link">is.infinite</a></span><span class="op">(</span><span class="va">.x</span><span class="op">)</span><span class="op">)</span><span class="op">)</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span></span>
+<span>  <span class="fu">ggplot</span><span class="op">(</span><span class="fu">aes</span><span class="op">(</span></span>
+<span>    x <span class="op">=</span> <span class="va">fema_declaration_request_number</span>, </span>
+<span>    color <span class="op">=</span> <span class="va">pda_pa_pci_county_ratio_logged</span> <span class="op">&gt;</span> <span class="fl">0</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>    <span class="fu">geom_point</span><span class="op">(</span><span class="fu">aes</span><span class="op">(</span>y <span class="op">=</span> <span class="va">pda_pa_pci_county_ratio_logged</span><span class="op">)</span>, alpha <span class="op">=</span> <span class="fl">.3</span><span class="op">)</span> <span class="op">+</span></span>
+<span>    <span class="fu">geom_errorbar</span><span class="op">(</span></span>
+<span>      data <span class="op">=</span> <span class="va">.</span> <span class="op"><a href="reference/pipe.html">%&gt;%</a></span> <span class="fu">distinct</span><span class="op">(</span><span class="va">fema_declaration_request_number</span>, .keep_all <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span>, </span>
+<span>      <span class="fu">aes</span><span class="op">(</span>x <span class="op">=</span> <span class="va">fema_declaration_request_number</span>, ymin <span class="op">=</span> <span class="va">county_pci_min</span>, ymax <span class="op">=</span> <span class="va">county_pci_max</span><span class="op">)</span>,</span>
+<span>      color <span class="op">=</span> <span class="st">"grey"</span>,</span>
+<span>      alpha <span class="op">=</span> <span class="fl">.5</span><span class="op">)</span> <span class="op">+</span></span>
+<span>    <span class="fu">annotate</span><span class="op">(</span></span>
+<span>      <span class="st">"text"</span>, x <span class="op">=</span> <span class="fl">45</span>, y <span class="op">=</span> <span class="fl">2.75</span>, hjust <span class="op">=</span> <span class="fl">1</span>,</span>
+<span>      label <span class="op">=</span> <span class="fu">str_wrap</span><span class="op">(</span><span class="st">"Counties above zero exceed the per-capita threshold"</span>, <span class="fl">25</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>    <span class="fu">annotate</span><span class="op">(</span></span>
+<span>      <span class="st">"curve"</span>, x <span class="op">=</span> <span class="fl">44</span>, y <span class="op">=</span> <span class="fl">2.1</span>, xend <span class="op">=</span> <span class="fl">45</span>, yend <span class="op">=</span> <span class="fl">0.1</span>, curvature <span class="op">=</span> <span class="op">-</span><span class="fl">0.35</span>,</span>
+<span>      arrow <span class="op">=</span> <span class="fu">arrow</span><span class="op">(</span>length <span class="op">=</span> <span class="fu">unit</span><span class="op">(</span><span class="fl">0.02</span>, <span class="st">"npc"</span><span class="op">)</span>, type <span class="op">=</span> <span class="st">"closed"</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>    <span class="fu">labs</span><span class="op">(</span></span>
+<span>      x <span class="op">=</span> <span class="st">""</span>, y <span class="op">=</span> <span class="st">""</span>, </span>
+<span>      title <span class="op">=</span> <span class="st">"Most denials include many counties that exceed the per-capita impact threshold"</span>,</span>
+<span>      subtitle <span class="op">=</span> <span class="fu">str_c</span><span class="op">(</span></span>
+<span>        <span class="st">"County-level per-capita impacts, logged, for denied declaration requests, 2010-2026.\n"</span>,</span>
+<span>        <span class="st">"Points represent counties, which are aligned vertically per declaration request."</span><span class="op">)</span><span class="op">)</span> <span class="op">+</span></span>
+<span>    <span class="fu">coord_cartesian</span><span class="op">(</span>clip <span class="op">=</span> <span class="st">"off"</span><span class="op">)</span> <span class="op">+</span></span>
+<span>    <span class="fu">theme</span><span class="op">(</span></span>
+<span>      legend.position <span class="op">=</span> <span class="st">"none"</span>,</span>
+<span>      axis.text.x <span class="op">=</span> <span class="fu">element_blank</span><span class="op">(</span><span class="op">)</span>, </span>
+<span>      axis.ticks.x <span class="op">=</span> <span class="fu">element_blank</span><span class="op">(</span><span class="op">)</span>, </span>
+<span>      axis.line.x <span class="op">=</span> <span class="fu">element_blank</span><span class="op">(</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<p><img src="reference/figures/README-unnamed-chunk-3-1.png"><!-- --></p>
 </div>
 <div class="section level2">
 <h2 id="use-of-generative-ai">Use of Generative AI<a class="anchor" aria-label="anchor" href="#use-of-generative-ai"></a>

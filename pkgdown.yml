@@ -3,7 +3,7 @@ pkgdown: 2.2.1
 pkgdown_sha: ~
 articles:
   preliminary_damage_assessments_validation: preliminary_damage_assessments_validation.html
-last_built: 2026-08-25T20:49Z
+last_built: 2026-08-27T13:04Z
 urls:
   reference: https://UrbanInstitute.github.io/preliminary-damage-assessments/reference
   article: https://UrbanInstitute.github.io/preliminary-damage-assessments/articles

@@ -88,7 +88,8 @@ the report text; the logic used is given with each.</p>
 <code>fema_</code> for FEMA's own declaration and denial records, <code>pda_</code> for values
 read out of the PDF reports. A column keeps the same name under either
 setting. When <code>join_outcomes = FALSE</code>, the columns describing the FEMA
-record or the match to it – <code>fema_disaster_number</code>, <code>fema_state_name</code>,
+record or the match to it – <code>fema_declaration_request_number</code>,
+<code>fema_disaster_number</code>, <code>fema_state_name</code>,
 <code>fema_state_fips</code>, <code>fema_decision</code>,
 <code>fema_decision_date</code>, <code>fema_decision_year</code>, <code>fema_declaration_request_date</code>,
 <code>fema_declaration_title</code>, <code>fema_requested_incident_types</code>, <code>fema_hazards</code>,
@@ -99,7 +100,17 @@ disaster number the report itself prints, and <code>pda_state_name</code> and
 <code>pda_state_fips</code>, the state read out of the report text (described under
 <code>fema_state_name</code> and <code>fema_state_fips</code> below, which hold FEMA's own value
 for a joined record).
-Columns include:</p><dl><dt>fema_disaster_number</dt>
+Columns include:</p><dl><dt>fema_declaration_request_number</dt>
+<dd><p>FEMA's own identifier for the
+declaration request, and the unique key of the returned data. It is
+never missing and never shared by two records, for approvals and
+denials alike, so it is the field to key an analysis on and the one to
+join other datasets by. <code>fema_disaster_number</code> identifies an approval
+just as well but is always NA on a denial. This column is absent when
+<code>join_outcomes = FALSE</code>, since it comes from FEMA's records rather
+than from a report; <code>pda_path</code> is the key of that output.</p></dd>
+
+<dt>fema_disaster_number</dt>
 <dd><p>FEMA disaster number. Denied requests are always NA.</p></dd>
 
 <dt>fema_state_name</dt>
@@ -225,14 +236,6 @@ each with its own county FIPS code and per capita impact.</p></dd>
 <dt>pda_pa_per_capita_impact_indicator_countywide</dt>
 <dd><p>FEMA's statutory countywide per capita
 threshold in dollars.</p></dd>
-
-<dt>pda_pa_per_capita_impact_countywide_max</dt>
-<dd><p>Maximum countywide per capita impact ratio parsed
-from <code>pa_per_capita_impact_countywide</code>.</p></dd>
-
-<dt>pda_pa_per_capita_impact_countywide_min</dt>
-<dd><p>Minimum countywide per capita impact ratio parsed
-from <code>pa_per_capita_impact_countywide</code>.</p></dd>
 
 <dt>pda_pa_threshold_ratio</dt>
 <dd><p><code>pa_per_capita_impact_statewide</code> divided by

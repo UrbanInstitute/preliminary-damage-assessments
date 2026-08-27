@@ -53,18 +53,29 @@ Every column name carries a prefix saying where its value came from:
 `fema_` for FEMA's own declaration and denial records, `pda_` for values
 read out of the PDF reports. A column keeps the same name under either
 setting. When `join_outcomes = FALSE`, the columns describing the FEMA
-record or the match to it – `fema_disaster_number`, `fema_state_name`,
-`fema_state_fips`, `fema_decision`, `fema_decision_date`,
-`fema_decision_year`, `fema_declaration_request_date`,
-`fema_declaration_title`, `fema_requested_incident_types`,
-`fema_hazards`, the eight `fema_*_declared`/`fema_*_requested` program
-fields, `fema_tribal_request`, `pda_matched`, and `pda_match_quality` –
-are absent, and three columns present only on that path take their
-place: `pda_disaster_number`, the disaster number the report itself
-prints, and `pda_state_name` and `pda_state_fips`, the state read out of
-the report text (described under `fema_state_name` and `fema_state_fips`
-below, which hold FEMA's own value for a joined record). Columns
-include:
+record or the match to it – `fema_declaration_request_number`,
+`fema_disaster_number`, `fema_state_name`, `fema_state_fips`,
+`fema_decision`, `fema_decision_date`, `fema_decision_year`,
+`fema_declaration_request_date`, `fema_declaration_title`,
+`fema_requested_incident_types`, `fema_hazards`, the eight
+`fema_*_declared`/`fema_*_requested` program fields,
+`fema_tribal_request`, `pda_matched`, and `pda_match_quality` – are
+absent, and three columns present only on that path take their place:
+`pda_disaster_number`, the disaster number the report itself prints, and
+`pda_state_name` and `pda_state_fips`, the state read out of the report
+text (described under `fema_state_name` and `fema_state_fips` below,
+which hold FEMA's own value for a joined record). Columns include:
+
+- fema_declaration_request_number:
+
+  FEMA's own identifier for the declaration request, and the unique key
+  of the returned data. It is never missing and never shared by two
+  records, for approvals and denials alike, so it is the field to key an
+  analysis on and the one to join other datasets by.
+  `fema_disaster_number` identifies an approval just as well but is
+  always NA on a denial. This column is absent when
+  `join_outcomes = FALSE`, since it comes from FEMA's records rather
+  than from a report; `pda_path` is the key of that output.
 
 - fema_disaster_number:
 
@@ -230,16 +241,6 @@ include:
 - pda_pa_per_capita_impact_indicator_countywide:
 
   FEMA's statutory countywide per capita threshold in dollars.
-
-- pda_pa_per_capita_impact_countywide_max:
-
-  Maximum countywide per capita impact ratio parsed from
-  `pa_per_capita_impact_countywide`.
-
-- pda_pa_per_capita_impact_countywide_min:
-
-  Minimum countywide per capita impact ratio parsed from
-  `pa_per_capita_impact_countywide`.
 
 - pda_pa_threshold_ratio:
 
