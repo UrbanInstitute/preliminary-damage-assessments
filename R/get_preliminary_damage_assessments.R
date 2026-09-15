@@ -446,7 +446,7 @@ first_token = function(value) {
 #'
 #' @return A length-one character version string.
 #' @noRd
-pda_parser_version = function() { "0.1.0" }
+pda_parser_version = function() { "0.1.1" }
 
 #' Warn when a cached dataset was written by different parsing logic
 #'
@@ -712,10 +712,13 @@ extract_pda_attributes = function(path) {
       text,
       term1 = "Total Public Assistance [Cc]ost [Ee]stimate:",
       term2 = "[Pp]er capita impact:")
+    ## Running to the end of the text sweeps up the footnotes that follow the
+    ## value, which is harmless here -- `clean_extracted_value()` and
+    ## `first_token()` below reduce the span to its first token either way.
     tribal_impact = extract_value(
       text,
       term1 = "[Pp]er capita impact:",
-      term2 = "[Pp]er capita impact indicator:")
+      term2 = "[Pp]er capita impact indicator:|$")
     tribal_indicator = extract_value(
       text,
       term1 = "[Pp]er capita impact indicator:",
