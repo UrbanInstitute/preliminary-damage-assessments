@@ -7,6 +7,7 @@ reference:
 - title: Functions
   contents:
   - scrape_pda_pdfs
+  - check_pda_cache
   - get_preliminary_damage_assessments
   - transform_pda_counties
 
