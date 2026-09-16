@@ -46,7 +46,10 @@ scrape_pda_pdfs(
 - delay_seconds:
 
   Seconds to pause between searching listing pages. Most users should
-  leave this as-is; shortening this delay can lead to an IP block.
+  leave this as-is; shortening this delay can lead to an IP block. After
+  a failed attempt, the pause before retrying is
+  `max(1, delay_seconds) * 2^attempt` seconds, capped at 120, so retries
+  always back off even when `delay_seconds = 0`.
 
 - quiet:
 

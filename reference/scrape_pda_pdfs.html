@@ -87,7 +87,10 @@ it as a failure.</p></dd>
 
 <dt id="arg-delay-seconds">delay_seconds<a class="anchor" aria-label="anchor" href="#arg-delay-seconds"></a></dt>
 <dd><p>Seconds to pause between searching listing pages.
-Most users should leave this as-is; shortening this delay can lead to an IP block.</p></dd>
+Most users should leave this as-is; shortening this delay can lead to an IP block.
+After a failed attempt, the pause before retrying is
+<code>max(1, delay_seconds) * 2^attempt</code> seconds, capped at 120, so retries
+always back off even when <code>delay_seconds = 0</code>.</p></dd>
 
 
 <dt id="arg-quiet">quiet<a class="anchor" aria-label="anchor" href="#arg-quiet"></a></dt>
