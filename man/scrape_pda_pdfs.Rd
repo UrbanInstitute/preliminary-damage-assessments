@@ -27,7 +27,10 @@ returning empty pages. Users should generally leave this as-is; default = 200.}
 it as a failure.}
 
 \item{delay_seconds}{Seconds to pause between searching listing pages.
-Most users should leave this as-is; shortening this delay can lead to an IP block.}
+Most users should leave this as-is; shortening this delay can lead to an IP block.
+After a failed attempt, the pause before retrying is
+\code{max(1, delay_seconds) * 2^attempt} seconds, capped at 120, so retries
+always back off even when \code{delay_seconds = 0}.}
 
 \item{quiet}{Suppress progress messages? Progress is reported by default.
 Warnings are always raised, regardless of this setting.}
