@@ -239,6 +239,7 @@ scrape_pda_pdfs = function(
       "resolved only across these pages.") }
 
   urls1 = character(0)
+  failed_pages = numeric(0)
   page_number = if (walk_whole_listing) 0 else page_queue[1]
   page_index = 1
   pages_read = 0
@@ -291,23 +292,20 @@ scrape_pda_pdfs = function(
       Sys.sleep(retry_delay)
     }
 
+    ## A page that cannot be read is recorded and skipped rather than stopping
+    ## the function. Stopping here would discard every link already collected
+    ## from earlier pages before any of them was downloaded: FEMA has served a
+    ## persistent 503 for "?page=1" while page 0 and page 2 loaded normally, so
+    ## `pages = 0:5` downloaded nothing while `pages = 0` worked.
     if (is.null(page_urls)) {
-      stop(
-        stringr::str_c(
-          "Could not read listing page ", page_number, " after ",
-          attempts_per_page, " attempts, most likely because FEMA is rate-",
-          "limiting the requests.",
-          "To resume from  where this stopped, wait a few minutes and call:\n",
-          "  scrape_pda_pdfs(cache_directory = \"", cache_directory,
-          "\", pages = ", page_number, ":", page_number + 49, ")\n",
-          "or raise delay_seconds / attempts_per_page for a slower, more ",
-          "patient scan"),
-        call. = FALSE) }
-
-    if (length(page_urls) == 0 && walk_whole_listing) { break }
+      failed_pages = c(failed_pages, page_number)
+      page_urls = character(0)
+    } else if (length(page_urls) == 0 && walk_whole_listing) {
+      break
+    } else {
+      pages_read = pages_read + 1 }
 
     urls1 = c(urls1, page_urls)
-    pages_read = pages_read + 1
 
     if (walk_whole_listing) {
       page_number = page_number + 1
@@ -361,10 +359,24 @@ scrape_pda_pdfs = function(
         "Do not treat the archive as complete until this count is zero."),
       call. = FALSE) }
 
+  if (length(failed_pages) > 0) {
+    warning(
+      stringr::str_c(
+        "Listing page(s) ", stringr::str_c(failed_pages, collapse = ", "),
+        " could not be read after ", attempts_per_page, " attempts each and ",
+        "were skipped; reports listed only on those pages were not downloaded. ",
+        "FEMA sometimes serves an error page for a single listing page for ",
+        "hours at a time, or rate-limits requests. Wait and re-run with:\n",
+        "  scrape_pda_pdfs(cache_directory = \"", cache_directory,
+        "\", pages = c(", stringr::str_c(failed_pages, collapse = ", "), "))\n",
+        "or raise delay_seconds / attempts_per_page for a slower, more ",
+        "patient scan."),
+      call. = FALSE) }
+
   ## Files present locally but not listed on the site. Checked only when the
-  ## whole listing was read: against a subset of pages, every cached file from
-  ## an unread page would be flagged.
-  orphans = if (walk_whole_listing) {
+  ## whole listing was read and every page loaded: against a subset of pages,
+  ## every cached file from an unread page would be flagged.
+  orphans = if (walk_whole_listing && length(failed_pages) == 0) {
     setdiff(
       list.files(cache_directory, recursive = TRUE, pattern = "(?i)pdf$"),
       destinations2$destination_file)
