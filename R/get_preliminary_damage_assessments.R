@@ -181,7 +181,10 @@ save_pdf = function(url, destfile, minimum_bytes = 2048) {
 #'   `NULL` walks the whole listing until a page returns no links. FEMA lists newest 
 #'   reports first, so  `pages = c(0:5)` is often sufficient and faster. 
 #' @param delay_seconds Seconds to pause between searching listing pages.
-#'   Most users should leave this as-is; shortening this delay can lead to an IP block. 
+#'   Most users should leave this as-is; shortening this delay can lead to an IP block.
+#'   After a failed attempt, the pause before retrying is
+#'   `max(1, delay_seconds) * 2^attempt` seconds, capped at 120, so retries
+#'   always back off even when `delay_seconds = 0`.
 #' @param quiet Suppress progress messages? Progress is reported by default. 
 #'   Warnings are always raised, regardless of this setting.
 #'
@@ -214,7 +217,7 @@ scrape_pda_pdfs = function(
   if (!dir.exists(cache_directory)) {
     dir.create(cache_directory, recursive = TRUE) }
 
-  base_url = "https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports?page="
+  base_url = "https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports"
 
   ## restored on exit so the function does not leave the user's session altered
   original_timeout = getOption("timeout")
@@ -246,7 +249,20 @@ scrape_pda_pdfs = function(
 
     for (attempt in seq_len(attempts_per_page)) {
       page_urls = tryCatch({
-        response = httr::GET(stringr::str_c(base_url, page_number), listing_headers)
+        ## FEMA's listing pages can be slow to respond; allow up to two minutes
+        ## per request before treating the attempt as failed and retrying
+        ## FEMA's CDN caches each URL separately, and the "?page=0" copy of the
+        ## first page has been observed to lag weeks behind the bare URL that
+        ## browsers load. Request the bare URL for page 0 so new reports appear.
+        listing_url = if (page_number == 0) {
+          base_url
+        } else {
+          stringr::str_c(base_url, "?page=", page_number) }
+
+        response = httr::GET(
+          listing_url,
+          listing_headers,
+          httr::timeout(120))
 
         if (httr::status_code(response) != 200) { stop("non-200 response") }
 
@@ -259,7 +275,20 @@ scrape_pda_pdfs = function(
         error = function(e) NULL)
 
       if (!is.null(page_urls)) { break }
-      Sys.sleep(min(120, delay_seconds * 2 ^ attempt))
+
+      if (attempt == attempts_per_page) {
+        notify(
+          "  Attempt ", attempt, " of ", attempts_per_page, " to read page ",
+          page_number, " failed. No attempts remain.")
+        break }
+
+      ## back off for at least 1 * 2^attempt seconds even when delay_seconds
+      ## is 0, since retrying immediately against a failed page never helps
+      retry_delay = min(120, max(1, delay_seconds) * 2 ^ attempt)
+      notify(
+        "  Attempt ", attempt, " of ", attempts_per_page, " to read page ",
+        page_number, " failed. Waiting ", retry_delay, " seconds before retrying.")
+      Sys.sleep(retry_delay)
     }
 
     if (is.null(page_urls)) {
@@ -267,15 +296,12 @@ scrape_pda_pdfs = function(
         stringr::str_c(
           "Could not read listing page ", page_number, " after ",
           attempts_per_page, " attempts, most likely because FEMA is rate-",
-          "limiting the walk. Stopping rather than continuing, because ",
-          "treating a failed page as the end of the listing would silently ",
-          "omit every report beyond it.\n",
-          "Reports from pages already read were not downloaded. To resume from ",
-          "where this stopped, wait a few minutes and call:\n",
+          "limiting the requests.",
+          "To resume from  where this stopped, wait a few minutes and call:\n",
           "  scrape_pda_pdfs(cache_directory = \"", cache_directory,
           "\", pages = ", page_number, ":", page_number + 49, ")\n",
           "or raise delay_seconds / attempts_per_page for a slower, more ",
-          "patient walk."),
+          "patient scan"),
         call. = FALSE) }
 
     if (length(page_urls) == 0 && walk_whole_listing) { break }
