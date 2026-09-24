@@ -38,6 +38,13 @@ We have taken significant steps to mitigate the prevalence of such errors throug
 both manual spot-checking and programmatic testing, but users should take this into 
 account if they choose to use these data. 
 
+Further, this package is under active development, and will continue to be updated to
+make the returned fields and specific values more comprehensive and robust. The data
+include a parser version number that reflects the vintage of the codebase used to produce
+the data; this can be a helpful tool if you want to pin your results to a specific version
+of the code. Using a dependency manager such as `renv` can help ensure that you're able to
+record and refer back to the specific GitHub commit from which you installed the package. 
+
 ## Installation
 
 ```{r install, eval = FALSE}
@@ -90,9 +97,32 @@ from the authoritative FEMA datasets as defining the universe of declarations,
 and we map PDAs back to this universe so that we can better understand the 
 relationships between preliminary damages and disaster declaration decisionmaking. 
 
+## Data and analysis notes
+
+The disaster declaration process is complex and nuanced. Users of these data should familiarize themselves
+with the process -- at a minimum, by reading FEMA's resources at https://www.fema.gov/disaster/how-declared --
+before beginning an analysis. Some important considerations relevant to how these data are created and can be used:
+
+ - Tribal nations that are lead applicants on a request for a declaration navigate a different
+   process with different evaluation criteria. The process shares many similarities with the 
+   process for a state- or territory-led request, but it may be more appropriate to analyze 
+   tribe-led requests separately. https://www.urban.org/urban-wire/how-tribes-can-pursue-disaster-declarations-and-federal-recovery-funding
+ - Funding programs are authorized discretely and for specific geographies. 
+   A declaration could approve Public Assistance and deny a request for Individual Assistance, 
+   or could authorize Public Assistance but only for a subset of the counties for which it was requested. 
+   Further, some PDAs refer to other disaster declaration-related programs, including the Hazard Mitigation Grant Program,
+   the Small Business Association's Disaster Loans, or particular programs within the umbrella Individual 
+   Assistance program. This package only derive data for specific programs that are frequently and consistently
+   referred to across PDA reports.  
+ - County-level data is derived from a standard, Public Assistance-specific field in the PDA report template. 
+   `transform_pda_counties` produces observations about counties for which Public Assistance was requested,
+   if it was requested and if counties were itemized. Do not attempt to use county-level observations to make
+   claims about other funding programs.
+ - As noted above, 
+
 ## Data preparation
 
-The package provides three functions for accessing PDA data: 
+The package provides three core functions for accessing PDA data: 
 
  - `scrape_pda_pdfs()` finds the URLs to every PDA report at 
   https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports and
@@ -103,7 +133,9 @@ The package provides three functions for accessing PDA data:
   in the user's specified directory. Accordingly, it is important to re-run this function 
   frequently if the most up-to-date data are important. The function does not re-download reports
   that are already saved in the user-specified directory, so after the initial run, which can be 
-  slow, subsequent runs should be very fast--they only add new reports.
+  slow, subsequent runs should be very fast--they only add new reports. `check_pda_cache()` is a
+  simple utility to help gauge whether your cache is approximately current with full universe of PDA
+  reports on FEMA's website.
 - `get_preliminary_damage_assessments()` walks the user's specified directory and extracts 
   structured attributes from each PDA report, compiling data from all reports in the directory 
   into a consistent dataset, and joining PDA attributes back to the authoritative FEMA-published 
@@ -129,10 +161,10 @@ scrape_pda_pdfs(cache_directory = file.path("data", "pdfs"))
 pdas = get_preliminary_damage_assessments(
   file_path = file.path("data", "pdas.csv"),
   directory_path = file.path("data", "pdfs"),
-  use_cache = FALSE)
+  use_cache = TRUE)
 ```
 
-## Analysis
+## Disaster-Level Analysis
 
 With our data in hand, it's trivial to summarize the universe of disaster declaration requests
 over time:
@@ -140,7 +172,7 @@ over time:
 ```{r declarations-over-time}
 percent_approved = pdas %>%
   count(fema_decision) %>%
-  mutate(percent = round(prop.table(n) * 100, digits = 0)) %>%
+  mutate(percent = round(n / sum(n) * 100, digits = 0)) %>%
   filter(fema_decision == "Approved") %>%
   pull(percent)
 
@@ -149,8 +181,8 @@ pdas %>%
   geom_bar(aes(x = fema_decision_year, fill = fema_decision)) +
   scale_x_continuous(breaks = seq(1950, 2030, by = 10)) +
   labs(
-    title = str_c(glue::glue("Since the 1950s, {percent_approved}% of disaster ", 
-    "declaration requests have been approved")),
+    title = glue::glue("Since the 1950s, {percent_approved}% of disaster ", 
+    "declaration requests have been approved"),
     x = "",
     y = "")
 ```
@@ -187,6 +219,8 @@ pdas %>%
       x = "",  y = "")
 ```
 
+## County-Level Analysis
+
 There is also a separate PCI at the county level, which accounts for the fact that disaster damages 
 could be concentrated in a subset of counties and warrant a declaration for one or more counties, 
 even if total damages do not meet the statewide PCI and a statewide disaster declaration may not be 
@@ -197,84 +231,82 @@ the counties it designated only for approved requests, so here we compare PDA-li
 against FEMA-published counties in approved requests. PDAs only systematically list the counties
 assessed for Public Assistance, so we likewise limit our comparison on that axis. 
 
-The two sources can differ legitimately: a declaration is often amended
+The two sources can differ for a few reasons: a declaration is often amended
 after the initial PDA report is published to add counties, and a county can be assessed (and thus
-incldued in a PDA report) without being designated to receive funding. A county name in the report that could 
-not be matched to a FIPS code also shows up as a report-only county, which may slightly overestimate the
-divergence between counties in PDAs vs. counties in authoritative FEMA data.
+included in a PDA report) without being designated to receive funding--what is reflected in the 
+authoritative FEMA data.
+
+We can see that coverage is generally fairly high, with nearly 80% correspondence between authoritative
+FEMA data and PDA reports. 
 
 ```{r pda-fema-county-agreement}
 county_pdas = pdas %>% transform_pda_counties()
 
-county_coverage = county_pdas %>% 
+## here we look at county-level correspondence 
+county_coverage = county_pdas %>%
   filter(pda_matched, fema_decision == "Approved") %>%
   filter(
-    .by = fema_declaration_request_number, 
+    .by = fema_declaration_request_number,
     any(pda_county_indicator, na.rm = TRUE)) %>%
-  count(pda_county_indicator, fema_county_indicator)
-
-county_pdas %>%
-  ## FEMA's designated counties exist only for approved requests
-  filter(fema_decision == "Approved", pda_matched == 1) %>%
-  ## only reports that print a county-level breakdown can be compared
-  filter(
-    .by = fema_declaration_request_number, 
-    any(pda_county_indicator, na.rm = TRUE)) %>%
-  mutate(
-    fema_pa_designated = coalesce(fema_county_indicator & fema_pa_declared_county, FALSE)) 
-
-county_agreement = county_pdas %>%
-  ## FEMA's designated counties exist only for approved requests
-  filter(fema_decision == "Approved", pda_matched == 1) %>%
-  ## only reports that print a county-level breakdown can be compared
-  filter(
-    .by = fema_declaration_request_number, 
-    any(pda_county_indicator, na.rm = TRUE)) %>%
+  ## only places with a county code can be matched between the two sources
+  filter(!is.na(pda_county_geoid)) %>%
+  ## a report covering two incidents lists some counties twice
+  distinct(fema_declaration_request_number, pda_county_geoid, .keep_all = TRUE) %>%
   mutate(
     fema_pa_designated = coalesce(fema_county_indicator & fema_pa_declared_county, FALSE)) %>%
-  summarise(
-    .by = fema_declaration_request_number,
-    counties_both = sum(pda_county_indicator & fema_pa_designated),
-    counties_pda_only = sum(pda_county_indicator & !fema_pa_designated),
-    counties_fema_only = sum(!pda_county_indicator & fema_pa_designated)) %>%
-  mutate(
-    share_fema_counties_in_pda = counties_both / (counties_both + counties_fema_only),
-    share_pda_counties_in_fema = counties_both / (counties_both + counties_pda_only))
+  ## counties FEMA designated only for other programs are outside the comparison
+  filter(pda_county_indicator | fema_pa_designated)
 
+county_coverage  %>%
+  count(pda_county_indicator, fema_pa_designated) %>%
+  mutate(percent = n / sum(n))
 
-county_agreement %>% 
-  summarize(
-    across(matches("^counties"), sum)) %>%
-  pivot_longer(everything()) %>%
+disaster_coverage = county_coverage %>%
+  filter(!(pda_county_indicator & fema_pa_designated)) %>%
+  count(fema_disaster_number, sort = TRUE) %>%
   mutate(
-    name = name %>% 
-      str_replace_all("_", " ") %>%
-      str_remove("^counties") %>% 
-      str_to_sentence() %>% 
-      str_replace_all(c("Fema" = "FEMA", "Pda" = "PDA")),
-    percent = value / sum(value)) %>%
+    `# of disasters` = row_number(),
+    running_sum = cumsum(n),
+    running_percent = running_sum / sum(n))
+
+disaster_coverage  %>%
   ggplot() +
-    geom_bar(aes(y = percent, fill = name)) +
+    geom_line(aes(x = `# of disasters`, y = running_percent)) +
     scale_y_continuous(labels = scales::percent_format()) +
-    labs(y = "", x = "", fill = "County-level coverage")
-
+    labs(
+      title = "Under 5% of all disasters account for half of all county non-correspondence",
+      y = "Share of county non-correspondence")
 ```
 
-```{r}
-county_impacts = county_pdas %>%
-  add_count(fema_disaster_number) %>%
-  filter(n > 1, pda_pa_requested == 1) %>%
-  filter(.by = fema_disaster_number, !(all(is.na(pda_pa_per_capita_impact_county)))) %>%
-  mutate(
-    .by = fema_disaster_number, 
-    county_pci_mean = mean(pda_pa_per_capita_impact_county, na.rm = TRUE),
-    county_pci_sd = sd(pda_pa_per_capita_impact_county, na.rm = TRUE))
+We can also see that non-correspondence is disproportionately driven by major
+events, perhaps because these types of events have initial PDAs submitted early with just a subset of the
+most impacted counties, and then the requests are amended over time as the full extent of damages becomes clearer.
 
-county_impacts %>%
-  filter(fema_decision_year > 2010, fema_decision == "Denied") %>%
+Notably, we cannot evaluate whether any of these patterns hold for denied requests since FEMA does not publish any
+county-level details in its authoritative request denial dataset.
+
+```{r}
+# the top disasters that drive county non-correspondence are disproportionately large-dollar-value events
+pdas %>%
+  mutate(
+    pda_pa_cost_estimate_total_millions = round(pda_pa_cost_estimate_total / 1000000, digits = 0), 
+    total_cost_percentile = ntile(pda_pa_cost_estimate_total, n = 100)) %>%
+  filter(fema_disaster_number %in% (disaster_coverage %>% slice(1:5) %>% pull(fema_disaster_number))) %>%
+  select(pda_pa_cost_estimate_total_millions, total_cost_percentile)
+```
+
+Because PDAs uniquely provide county-level information for denied requests, they allow us to look beyond just the
+statewide per-capita impact to see how county-level impact distributions relate to which requests are approved/denied. 
+
+```{r}
+county_pdas %>%
+  filter(fema_decision_year > 2007, fema_decision == "Denied") %>%
   mutate(
     pda_pa_pci_county_ratio = pda_pa_per_capita_impact_county / pda_pa_per_capita_impact_indicator_countywide,
     pda_pa_pci_county_ratio_logged = log(pda_pa_pci_county_ratio)) %>%
+  filter(
+    ## produced when pda_pa_pci_county_ratio == 0
+    !is.infinite(pda_pa_pci_county_ratio_logged)) %>%
   mutate(
     .by = fema_declaration_request_number,
     county_pci_min = min(pda_pa_pci_county_ratio_logged, na.rm = TRUE),
@@ -302,7 +334,7 @@ county_impacts %>%
       x = "", y = "", 
       title = "Most denials include many counties that exceed the per-capita impact threshold",
       subtitle = str_c(
-        "County-level per-capita impacts, logged, for denied declaration requests, 2010-2026.\n",
+        "County-level per-capita impacts, logged, for denied declaration requests, 2008-2026.\n",
         "Points represent counties, which are aligned vertically per declaration request.")) +
     coord_cartesian(clip = "off") +
     theme(
@@ -311,8 +343,6 @@ county_impacts %>%
       axis.ticks.x = element_blank(), 
       axis.line.x = element_blank())
 ```
-
-
 
 ## Use of Generative AI
 
