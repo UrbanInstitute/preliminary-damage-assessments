@@ -124,12 +124,12 @@ scrape_pda_pdfs(cache_directory = file.path("data", "pdfs"))
 ```
 
 ```{r}
-## this extracts attributes from all reports
+## this extracts attributes from all PDA reports in directory_path
 ## use_cache = TRUE will not capture newly-scraped PDFs
 pdas = get_preliminary_damage_assessments(
   file_path = file.path("data", "pdas.csv"),
   directory_path = file.path("data", "pdfs"),
-  use_cache = TRUE)
+  use_cache = FALSE)
 ```
 
 ## Analysis
@@ -197,58 +197,67 @@ the counties it designated only for approved requests, so here we compare PDA-li
 against FEMA-published counties in approved requests. PDAs only systematically list the counties
 assessed for Public Assistance, so we likewise limit our comparison on that axis. 
 
-The two sources can legitimately differ: a declaration is often amended
+The two sources can differ legitimately: a declaration is often amended
 after the initial PDA report is published to add counties, and a county can be assessed (and thus
-potentially incldued in a PDA report) without being designated. A county name in the report that could 
+incldued in a PDA report) without being designated to receive funding. A county name in the report that could 
 not be matched to a FIPS code also shows up as a report-only county, which may slightly overestimate the
 divergence between counties in PDAs vs. counties in authoritative FEMA data.
 
 ```{r pda-fema-county-agreement}
 county_pdas = pdas %>% transform_pda_counties()
 
+county_coverage = county_pdas %>% 
+  filter(pda_matched, fema_decision == "Approved") %>%
+  filter(
+    .by = fema_declaration_request_number, 
+    any(pda_county_indicator, na.rm = TRUE)) %>%
+  count(pda_county_indicator, fema_county_indicator)
+
+county_pdas %>%
+  ## FEMA's designated counties exist only for approved requests
+  filter(fema_decision == "Approved", pda_matched == 1) %>%
+  ## only reports that print a county-level breakdown can be compared
+  filter(
+    .by = fema_declaration_request_number, 
+    any(pda_county_indicator, na.rm = TRUE)) %>%
+  mutate(
+    fema_pa_designated = coalesce(fema_county_indicator & fema_pa_declared_county, FALSE)) 
+
 county_agreement = county_pdas %>%
   ## FEMA's designated counties exist only for approved requests
   filter(fema_decision == "Approved", pda_matched == 1) %>%
   ## only reports that print a county-level breakdown can be compared
-  filter(.by = fema_declaration_request_number, any(pda_county_indicator, na.rm = TRUE)) %>%
+  filter(
+    .by = fema_declaration_request_number, 
+    any(pda_county_indicator, na.rm = TRUE)) %>%
   mutate(
-    pda_listed = coalesce(pda_county_indicator, FALSE),
     fema_pa_designated = coalesce(fema_county_indicator & fema_pa_declared_county, FALSE)) %>%
   summarise(
     .by = fema_declaration_request_number,
-    counties_both = sum(pda_listed & fema_pa_designated),
-    counties_pda_only = sum(pda_listed & !fema_pa_designated),
-    counties_fema_only = sum(!pda_listed & fema_pa_designated)) %>%
+    counties_both = sum(pda_county_indicator & fema_pa_designated),
+    counties_pda_only = sum(pda_county_indicator & !fema_pa_designated),
+    counties_fema_only = sum(!pda_county_indicator & fema_pa_designated)) %>%
   mutate(
     share_fema_counties_in_pda = counties_both / (counties_both + counties_fema_only),
     share_pda_counties_in_fema = counties_both / (counties_both + counties_pda_only))
 
-percent_fully_captured = county_agreement %>%
-  summarise(percent = round(mean(share_fema_counties_in_pda == 1, na.rm = TRUE) * 100)) %>%
-  pull(percent)
 
-county_agreement %>%
-  pivot_longer(
-    cols = c(share_fema_counties_in_pda, share_pda_counties_in_fema),
-    names_to = "measure",
-    values_to = "share") %>%
-  filter(!is.na(share)) %>%
-  mutate(measure = case_match(
-    measure,
-    "share_fema_counties_in_pda" ~ "Share of FEMA's PA-designated counties listed in the PDA",
-    "share_pda_counties_in_fema" ~ "Share of PDA-listed counties FEMA designated for PA")) %>%
-  ggplot(aes(x = share)) +
-    geom_histogram(binwidth = .05, boundary = 1) +
-    facet_wrap(~ measure, ncol = 1) +
-    scale_x_continuous(labels = scales::percent) +
-    labs(
-      title = str_c(
-        "The PDA lists every county FEMA designated for PA in ", percent_fully_captured,
-        "% of approved requests") %>% str_wrap(80),
-      subtitle = str_c(
-        "Number of approved requests whose PDA report includes a county-level ",
-        "breakdown. The rightmost bar in each panel spans 95-100%.") %>% str_wrap(100),
-      x = "", y = "")
+county_agreement %>% 
+  summarize(
+    across(matches("^counties"), sum)) %>%
+  pivot_longer(everything()) %>%
+  mutate(
+    name = name %>% 
+      str_replace_all("_", " ") %>%
+      str_remove("^counties") %>% 
+      str_to_sentence() %>% 
+      str_replace_all(c("Fema" = "FEMA", "Pda" = "PDA")),
+    percent = value / sum(value)) %>%
+  ggplot() +
+    geom_bar(aes(y = percent, fill = name)) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(y = "", x = "", fill = "County-level coverage")
+
 ```
 
 ```{r}
