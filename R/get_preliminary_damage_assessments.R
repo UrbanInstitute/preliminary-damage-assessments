@@ -160,7 +160,7 @@ save_pdf = function(url, destfile, minimum_bytes = 2048) {
   "downloaded"
 }
 
-#' @title Download Preliminary Damage Assessment (PDA) PDF Reports to Disk
+#' @title Download Preliminary Damage Assessment (PDA) Reports to Disk
 #'
 #' @description Downloads every PDA report that FEMA publishes into a local
 #'   directory so that `get_preliminary_damage_assessments()` has a complete and
@@ -182,11 +182,7 @@ save_pdf = function(url, destfile, minimum_bytes = 2048) {
 #'   reports first, so  `pages = c(0:5)` is often sufficient and faster. 
 #' @param delay_seconds Seconds to pause between searching listing pages.
 #'   Most users should leave this as-is; shortening this delay can lead to an IP block.
-#'   After a failed attempt, the pause before retrying is
-#'   `max(1, delay_seconds) * 2^attempt` seconds, capped at 120, so retries
-#'   always back off even when `delay_seconds = 0`.
 #' @param quiet Suppress progress messages? Progress is reported by default. 
-#'   Warnings are always raised, regardless of this setting.
 #'
 #' @return Invisibly, a tibble with one row per report found on the site,
 #'   containing `url`, `destination_file`, and `status` (`"cached"`,
@@ -484,7 +480,7 @@ first_token = function(value) {
 #'
 #' @return A length-one character version string.
 #' @noRd
-pda_parser_version = function() { "0.1.1" }
+pda_parser_version = function() { "0.1.2" }
 
 #' Warn when a cached dataset was written by different parsing logic
 #'
@@ -635,6 +631,49 @@ extract_pda_attributes = function(path) {
   disaster_number_from_text = read_disaster_number(text0)
   disaster_number_from_filename = read_disaster_number(basename(path))
 
+  ## The insured-residence line is read whole and its rates assigned by how
+  ## many it prints and whether one is labelled as flood coverage. FEMA varies
+  ## the layout: "12.0%", "0.5% Flood", "Flood 1.1%", "64.0% 1.1% Flood",
+  ## "12.0% Flood 0.3%", "Homeowner's 53.0% Flood 6.2%". 
+  insured_line = text %>%
+    extract_value(
+      term1 = "Percentage of insured residences:",
+      term2 = stringr::str_c(
+        "Percentage of (low[- ]income|poverty|elderly|ownership) households|",
+        "Population receiving|Pre-Disaster Unemployment|",
+        "Total Individual Assistance|$")) %>%
+    remove_footnote_marker() %>%
+    dplyr::coalesce("")
+  ## "N/A" holds the place of a rate the report leaves blank, so that in
+  ## "N/A 2.0% Flood" the flood rate is still the second. A number without a
+  ## percent sign counts only where the line has no rate with one ("59.3"), so
+  ## that a stray number beside a marked rate ("29.0% flood 0") is ignored.
+  read_rates = function(rate_pattern) {
+    insured_line %>%
+      stringr::str_extract_all(stringr::str_c(rate_pattern, "|N/A")) %>%
+      unlist() %>%
+      stringr::str_remove("\\s*%$") %>%
+      dplyr::na_if("N/A") }
+  insured_rates_marked = read_rates("(?<![<0-9.])[0-9]+(?:\\.[0-9]+)?\\s*%")
+  insured_rates = if (any(!is.na(insured_rates_marked))) {
+    insured_rates_marked
+  } else {
+    read_rates("(?<![<0-9.])[0-9]+(?:\\.[0-9]+)?(?![0-9.])") }
+  flood_label_count = stringr::str_count(
+    insured_line, stringr::regex("\\bflood", ignore_case = TRUE))
+  is_bound = stringr::str_detect(insured_line, "<")
+
+  insured_total = dplyr::case_when(
+    is_bound ~ NA_character_,
+    length(insured_rates) == 1 & flood_label_count == 0 ~ insured_rates[1],
+    length(insured_rates) == 2 & flood_label_count == 1 ~ insured_rates[1],
+    TRUE ~ NA_character_)
+  insured_flood = dplyr::case_when(
+    is_bound ~ NA_character_,
+    length(insured_rates) == 1 & flood_label_count == 1 ~ insured_rates[1],
+    length(insured_rates) == 2 & flood_label_count == 1 ~ insured_rates[2],
+    TRUE ~ NA_character_)
+
   result = tibble::tibble(
       path = path,
       disaster_number = dplyr::coalesce(
@@ -673,14 +712,8 @@ extract_pda_attributes = function(path) {
       ia_residences_major_damage = text %>% extract_value(term1 = dash_label("Major Damage"), term2 = dash_label("Minor Damage")),
       ia_residences_minor_damage = text %>% extract_value(term1 = dash_label("Minor Damage"), term2 = dash_label("Affected")),
       ia_residences_affected = text %>% extract_value(term1 = dash_label("Affected"), term2 = "Percentage of insured residences:"),
-      ia_residences_insured_total_percent = text %>% extract_value(
-        term1 = "Percentage of insured residences:",
-        term2 = "Percentage of low income households|Percentage of poverty households|Percentage of elderly households|Flood"),
-      ia_residences_insured_flood_percent = text %>%
-        stringr::str_extract("[0-9]{1,3}(\\.[0-9]{1,2})?\\s*\\%\\s*Flood") %>%
-        stringr::str_remove("Flood") %>%
-        stringr::str_remove("\\%") %>%
-        stringr::str_squish(),
+      ia_residences_insured_total_percent = insured_total,
+      ia_residences_insured_flood_percent = insured_flood,
       ia_households_poverty_percent = text %>% extract_value(term1 = "Percentage of poverty households:|Percentage of low income households:", term2 = "Percentage of ownership households:|Percentage of elderly households:"),
       ia_households_owner_percent = text %>% extract_value(
         term1 = "Percentage of ownership households:",
@@ -1185,6 +1218,18 @@ check_pda_quality = function(pda_df) {
         column, " is exactly zero, which is not a likely value for this ",
         "measure. Check the source text to confirm, and interpret with caution.")) })
 
+  ## 8a. A total insured rate equal to the flood rate. Flood coverage is
+  ## normally a small share of total coverage, so the two agreeing above zero
+  ## usually means one rate was read into both fields. Zero is exempt: a report
+  ## can state that no impacted residence carried insurance of either kind.
+  if (has("ia_residences_insured_total_percent") && has("ia_residences_insured_flood_percent")) {
+    flag_rows(
+      pda_df$ia_residences_insured_total_percent == pda_df$ia_residences_insured_flood_percent &
+        pda_df$ia_residences_insured_total_percent > 0,
+      stringr::str_c(
+        "the total and flood insured rates are the same, which is unlikely; ",
+        "one rate may have been read into both fields")) }
+
   ## 9. Single values far above the rest of their column.
   purrr::walk(measure_columns, function(column) {
     x = pda_df[[column]]
@@ -1551,8 +1596,11 @@ add_pda_derived_columns = function(pda_df) {
         stringr::str_remove_all(stringr::regex("\\bPDA Reports?\\b", ignore_case = TRUE)) %>%
         stringr::str_remove_all(stringr::str_c("\\((", state_pattern, ")\\)")) %>%
         stringr::str_remove("^[^A-Za-z0-9]+") %>%
+        ## "District of" is left in place before "Columbia", where it is part of
+        ## the name the next step removes whole; removed here, it would leave
+        ## "Columbia" at the head of every District of Columbia title
         stringr::str_remove(stringr::regex(
-          "^\\s*(the\\s+)?(State|Commonwealth|Territory|District)\\s+of\\s+", ignore_case = TRUE)) %>%
+          "^\\s*(the\\s+)?(State|Commonwealth|Territory|District)\\s+of\\s+(?!Columbia\\b)", ignore_case = TRUE)) %>%
         stringr::str_remove(stringr::str_c(
           "^\\s*(", state_pattern, ")",
           "(?!\\s+(County|City|Parish|Borough|Township)\\b)",
@@ -1829,13 +1877,58 @@ match_tribal_names_to_native_areas = function(tribal_names) {
   matched[match(tribal_names, distinct_names)]
 }
 
+#' The states a Census native area lies in
+#'
+#' A tribal report names the tribe but not the state, while FEMA files a tribal
+#' request under the state the tribe's lands lie in. This supplies that state so
+#' a tribal report can be matched to FEMA's record on it. 
+#'
+#' @param geoids A character vector of `GEOID` values from
+#'   `tigris::native_areas()`.
+#' @return A character vector the same length as `geoids`, each element a
+#'   semicolon-separated set of state names in `state_reference()` spelling, `NA`
+#'   where the `GEOID` is missing or the boundaries could not be downloaded.
+#' @noRd
+native_area_state_names = function(geoids) {
+  if (all(is.na(geoids))) { return(rep(NA_character_, length(geoids))) }
+
+  fetch = purrr::possibly(
+    function() {
+      areas = tigris::native_areas(year = 2023, progress_bar = FALSE) %>%
+        sf::st_transform(5070)
+      states = tigris::states(cb = TRUE, year = 2023, progress_bar = FALSE) %>%
+        sf::st_transform(5070)
+      overlapping_states = sf::st_relate(areas, states, pattern = "T********")
+      tibble::tibble(
+        GEOID = areas$GEOID,
+        state_names = purrr::map_chr(
+          overlapping_states,
+          ~ stringr::str_c(standardize_state_names(states$NAME[.x]), collapse = "; ")) %>%
+          dplyr::na_if("")) },
+    otherwise = NULL)
+  area_states = fetch()
+
+  if (is.null(area_states)) {
+    warning(
+      stringr::str_c(
+        "Census native area or state boundaries could not be downloaded, so ",
+        "tribal reports are matched to FEMA denials without knowing the ",
+        "tribe's state, and fewer of them will match."),
+      call. = FALSE)
+    return(rep(NA_character_, length(geoids))) }
+
+  area_states$state_names[match(geoids, area_states$GEOID)]
+}
+
 #' Hand-checked links between denial PDA reports and FEMA denial records
 #'
 #' A denied request has no disaster number, so the automatic passes match on the
 #' decision date. Where two of a state's requests were decided on the same day
 #' and FEMA's names for them carry nothing that ties either to its report, no
 #' rule can separate them, and there are few enough such cases to settle by
-#' hand.
+#' hand. The same goes for a report whose title names a different hazard from
+#' the one its own text and FEMA's record describe. Each link's note says why it
+#' was needed, and is written into `match_quality` for the report it links.
 #'
 #' The link is recorded as FEMA's own declaration request number, so that a
 #' change to how FEMA spells a state or names an incident cannot silently break
@@ -1854,7 +1947,11 @@ manual_pda_denial_links = function() {
 
     "PDAReportDenialCRST.pdf",
     "24015",
-    "The other of the two same-day South Dakota denials (request 24015, 'SD - Severe Storms 07/04/2018'), left for the Cheyenne River Sioux Tribe once the Oglala Sioux Tribe claims the denial naming it.")
+    "The other of the two same-day South Dakota denials (request 24015, 'SD - Severe Storms 07/04/2018'), left for the Cheyenne River Sioux Tribe once the Oglala Sioux Tribe claims the denial naming it.",
+
+    "PDAReport_010408_IN_denial.pdf",
+    "7926",
+    "The report's title names 'Severe Winter Storms', but its text describes the appeal of a request made for severe storms and a tornado on October 18, 2007, which is FEMA's request 7926 ('Severe Storms and a Tornado'), turned down on the report's own date of January 4, 2008. The title's hazard disagrees with FEMA's, so no rule accepts the match.")
 }
 
 #' Fill in the statutory per capita indicators where a report omits them
@@ -1979,22 +2076,36 @@ impute_per_capita_indicators = function(pda_df) {
 #' no same-day denial gets one further chance: the nearest denial within
 #' seven days either side, and only when the hazard categories agree.
 #'
-#' Two further passes then run over the reports the state-keyed passes could not
-#' reach at all. A tribal report names the tribe rather than a state, so there is
-#' no state to match on; for those the state is dropped from the key and the date
-#' used alone, but only where exactly one unclaimed denial in the country
-#' shares that date. Tested against the 168 denials the state-keyed pass does
-#' resolve, that rule fires on 133 of them and picks the correct denial in all
-#' 133, and declines on the remaining 35 rather than guessing. What it cannot
-#' settle is two of a state's requests decided on the same day, which is what
+#' A report still unmatched is then matched on the date the request was filed,
+#' which the report states in its opening sentence and FEMA records as
+#' `declaration_request_date`. This reaches the reports whose decision date is
+#' not the one FEMA recorded: FEMA keeps one decision date per request, the
+#' latest, so an original denial later appealed, or an appeal FEMA never
+#' recorded, carries a different date from its report.
+#'
+#' A tribal report names the tribe rather than a state. Where the tribe's Census
+#' area is known, the states that area lies in stand in for the state in the
+#' filing-date pass. For the reports no state-keyed pass could reach, the state
+#' is then dropped from the key and the decision date used alone, but only
+#' where exactly one unclaimed denial in the country -- or in the tribe's
+#' states, where known -- shares that date. Tested against the 168 denials the
+#' state-keyed pass does resolve, that rule, used without the tribe's states,
+#' fires on 133 of them and picks the correct denial in all 133, and declines
+#' on the remaining 35 rather than guessing. What it cannot settle is two of a
+#' state's requests decided on the same day, which is what
 #' `manual_pda_denial_links()` is for.
 #'
 #' @param denied_pdas Denied PDA records, with `state_name`, `decision`,
-#'   `event_date_determined`, and `hazards`.
+#'   `event_date_determined`, `event_title`, `hazards`, `request_date_stated`
+#'   (the filing date the report states, `NA` where it states none), and
+#'   `tribal_state_names` (the semicolon-separated states the tribe's lands lie
+#'   in, `NA` for a state report or where the tribe's area is unknown).
 #' @param denials FEMA denial records, with `state_name`, `decision`,
-#'   `request_status_date`, `declaration_request_number`, and `denial_hazards`.
-#' @return `denied_pdas` with one row each, plus `declaration_request_number`
-#'   (`NA` where no match was made) and `match_quality`.
+#'   `request_status_date`, `declaration_request_date`,
+#'   `declaration_request_number`, `declaration_title`, and `denial_hazards`.
+#' @return `denied_pdas` with one row each, without `request_date_stated` and
+#'   `tribal_state_names`, plus `declaration_request_number` (`NA` where no
+#'   match was made) and `match_quality`.
 #' @noRd
 match_denied_pdas_to_denials = function(denied_pdas, denials) {
 
@@ -2116,9 +2227,66 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
     dplyr::arrange(pda_id) %>%
     dplyr::select(dplyr::all_of(names(denied_pdas1)), declaration_request_number, match_quality)
 
-  ## step 6: the date alone, without the state. This reaches only the reports the
+  ## TRUE where `state_names` is known and contains `state_name`, NA where
+  ## `state_names` is unknown; `state_names` is semicolon-separated
+  state_in_list = function(state_name, state_names) {
+    dplyr::if_else(
+      is.na(state_names),
+      NA,
+      stringr::str_detect(
+        stringr::str_c("; ", state_names, "; "),
+        stringr::fixed(stringr::str_c("; ", dplyr::coalesce(state_name, ""), "; ")))) }
+
+  ## step 6: the date the request was filed. The decision date FEMA records is
+  ## the latest decision on the request, so it is not the report's date when
+  ## the report describes the original denial and FEMA recorded a later appeal,
+  ## or when the report describes an appeal and FEMA never recorded it. The
+  ## filing date the report states is FEMA's `declaration_request_date` in 163
+  ## of the 191 matched reports that state one (most of the rest differ by a
+  ## day), and no appeal changes it. The state is the report's own or, for a
+  ## tribal report, one of the states the tribe's lands lie in. The denial must
+  ## be the only unclaimed one sharing both, and must agree on hazard or share a
+  ## word with the report's title, which rejects a report that misprints its
+  ## filing date.
+  claimed_by_state = stats::na.omit(resolved_by_state$declaration_request_number)
+
+  matched_by_request_date = resolved_by_state %>%
+    dplyr::filter(is.na(match_quality), !is.na(request_date_stated)) %>%
+    dplyr::select(-declaration_request_number, -match_quality) %>%
+    dplyr::inner_join(
+      denials %>%
+        dplyr::filter(!declaration_request_number %in% claimed_by_state) %>%
+        dplyr::select(
+          denial_state_name = state_name, decision, declaration_request_date,
+          declaration_request_number, declaration_title, denial_hazards),
+      by = dplyr::join_by(decision, request_date_stated == declaration_request_date),
+      relationship = "many-to-many") %>%
+    dplyr::filter(dplyr::coalesce(
+      state_name == denial_state_name,
+      state_in_list(denial_state_name, tribal_state_names),
+      FALSE)) %>%
+    dplyr::mutate(
+      shared_hazard_count = shared_hazard_category_count(hazards, denial_hazards),
+      shares_a_word = shared_title_word_count(event_title, declaration_title) > 0) %>%
+    dplyr::filter(
+      dplyr::coalesce(shared_hazard_count > 0, FALSE) | dplyr::coalesce(shares_a_word, FALSE)) %>%
+    dplyr::add_count(pda_id, name = "candidate_count") %>%
+    dplyr::add_count(declaration_request_number, name = "pdas_per_denial") %>%
+    dplyr::filter(candidate_count == 1, pdas_per_denial == 1) %>%
+    dplyr::transmute(
+      pda_id,
+      declaration_request_number,
+      match_quality = stringr::str_c(
+        "exact: the filing date the PDA states is the denial's request date, ",
+        "in the same state, because no denial carries the PDA determination date"))
+
+  resolved_by_request_date = resolved_by_state %>%
+    dplyr::rows_update(matched_by_request_date, by = "pda_id", unmatched = "ignore")
+
+  ## step 7: the date alone, without the state. This reaches only the reports the
   ## state-keyed passes never had a candidate for. The denial must be the only unclaimed one in
-  ## the country on that date, and must either agree on hazard or share a word
+  ## the country on that date -- or, for a tribal report, in the states the
+  ## tribe's lands lie in -- and must either agree on hazard or share a word
   ## with the report's title, so a same-day denial from an unrelated request
   ## cannot be picked up on the date alone.
   had_state_candidate = candidates1 %>%
@@ -2126,19 +2294,22 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
     dplyr::pull(pda_id) %>%
     unique()
 
-  eligible_for_date_only = resolved_by_state %>%
+  eligible_for_date_only = resolved_by_request_date %>%
     dplyr::filter(is.na(match_quality), !pda_id %in% had_state_candidate)
 
   unclaimed = denials %>%
-    dplyr::filter(!declaration_request_number %in% stats::na.omit(resolved_by_state$declaration_request_number))
+    dplyr::filter(!declaration_request_number %in% stats::na.omit(resolved_by_request_date$declaration_request_number))
 
   matched_by_date = eligible_for_date_only %>%
     dplyr::select(-declaration_request_number, -match_quality) %>%
     dplyr::left_join(
       unclaimed %>%
-        dplyr::select(request_status_date, declaration_request_number, declaration_title, denial_hazards),
+        dplyr::select(
+          denial_state_name = state_name, request_status_date,
+          declaration_request_number, declaration_title, denial_hazards),
       by = dplyr::join_by(event_date_determined == request_status_date),
       relationship = "many-to-many") %>%
+    dplyr::filter(dplyr::coalesce(state_in_list(denial_state_name, tribal_state_names), TRUE)) %>%
     dplyr::add_count(pda_id, name = "candidate_count") %>%
     dplyr::mutate(
       shared_hazard_count = shared_hazard_category_count(hazards, denial_hazards),
@@ -2148,20 +2319,24 @@ match_denied_pdas_to_denials = function(denied_pdas, denials) {
         candidate_count == 1 &
         (dplyr::coalesce(shared_hazard_count > 0, FALSE) | dplyr::coalesce(shares_a_word, FALSE)),
       declaration_request_number = dplyr::if_else(match_ok, declaration_request_number, NA_character_),
-      match_quality = dplyr::if_else(
-        match_ok,
-        "exact: the only denial in the country sharing the PDA determination date, matched without the state key because the report names none",
-        NA_character_)) %>%
+      match_quality = dplyr::case_when(
+        !match_ok ~ NA_character_,
+        is.na(tribal_state_names) ~
+          "exact: the only denial in the country sharing the PDA determination date, matched without the state key because the report names none",
+        TRUE ~
+          "exact: the only denial sharing the PDA determination date in the states the tribe's lands lie in, which the report does not name")) %>%
     dplyr::slice_head(n = 1, by = pda_id) %>%
-    dplyr::select(dplyr::all_of(names(resolved_by_state)))
+    dplyr::select(dplyr::all_of(names(resolved_by_request_date)))
 
-  resolved_by_date = resolved_by_state %>%
+  resolved_by_date = resolved_by_request_date %>%
     dplyr::rows_update(matched_by_date, by = "pda_id", unmatched = "ignore")
 
-  ## step 7: the hand-checked links, for what no rule can separate
+  ## step 8: the hand-checked links, for what no rule can separate. The filing
+  ## date and the tribe's states are used only for matching, so they are dropped
+  ## here.
   resolved_by_date %>%
     apply_manual_pda_denial_links(denials) %>%
-    dplyr::select(-pda_id)
+    dplyr::select(-pda_id, -request_date_stated, -tribal_state_names)
 }
 
 #' Count the words two event descriptions share
@@ -2242,7 +2417,7 @@ apply_manual_pda_denial_links = function(denied_pdas, denials) {
 
   applied = checked %>%
     dplyr::filter(usable) %>%
-    dplyr::select(pda_file, linked_request_number = declaration_request_number)
+    dplyr::select(pda_file, linked_request_number = declaration_request_number, note)
 
   if (nrow(applied) == 0) { return(denied_pdas) }
 
@@ -2250,12 +2425,13 @@ apply_manual_pda_denial_links = function(denied_pdas, denials) {
     dplyr::mutate(pda_file = basename(path)) %>%
     dplyr::left_join(applied, by = "pda_file", relationship = "many-to-one") %>%
     dplyr::mutate(
+      ## each link's own note says why no rule could make it
       match_quality = dplyr::if_else(
         is.na(match_quality) & !is.na(linked_request_number),
-        "manual: linked by hand, because two of the state's requests were decided on the same day and FEMA's record names neither in a way a rule could tie to its report",
+        stringr::str_c("manual: linked by hand. ", note),
         match_quality),
       declaration_request_number = dplyr::coalesce(declaration_request_number, linked_request_number)) %>%
-    dplyr::select(-pda_file, -linked_request_number)
+    dplyr::select(-pda_file, -linked_request_number, -note)
 }
 
 #' Add the measures derived from a PDA report alone
@@ -2421,8 +2597,30 @@ join_pda_outcomes = function(pda_df) {
   ## reports whose state could not be read -- a tribal report names the tribe,
   ## not a state -- are kept: the state-keyed passes cannot reach them, but the
   ## date-only pass and the hand-checked links can
+  months = c(
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December") %>%
+    stringr::str_c(collapse = "|")
+
   pdas_denied = pdas %>%
     dplyr::filter(decision == "Denied") %>%
+    dplyr::mutate(
+      ## the filing date from the report's opening sentence ("On March 16, 2026,
+      ## Governor Bill Anoatubby requested a major disaster declaration"). The
+      ## span between the date and "requested" may not hold another dated
+      ## sentence or an appeal, so an appeal's date ("On December 7, 2007, the
+      ## Governor appealed ... The Governor had requested a declaration") and
+      ## the date of an assessment ("conducted in the requested areas") are
+      ## not read as the filing date.
+      request_date_stated = stringr::str_extract(
+          text,
+          stringr::str_c(
+            "\\bOn (", months, ") [0-9]{1,2},? [0-9]{4},?",
+            "(?:(?!\\bOn (", months, ") |appeal)[\\s\\S]){0,200}?",
+            "\\brequested (a|an)\\b")) %>%
+        stringr::str_extract(stringr::str_c("(", months, ") [0-9]{1,2},? [0-9]{4}")) %>%
+        date_string_to_date(),
+      tribal_state_names = native_area_state_names(tribal_fips)) %>%
     match_denied_pdas_to_denials(denials)
 
   joined_approved = declarations %>%
@@ -2542,7 +2740,7 @@ join_pda_outcomes = function(pda_df) {
   joined
 }
 
-#' Get FEMA Preliminary Damage Assessments Report Data
+#' Get FEMA Preliminary Damage Assessment Report Data
 #'
 #' @description Returns structured data extracted from PDF preliminary damage assessment (PDA)
 #'   reports.
@@ -2551,7 +2749,8 @@ join_pda_outcomes = function(pda_df) {
 #'   \url{https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports}.
 #'   Owing to the unstructured nature of the source documents, some fields may be incorrect
 #'   in the data returned by the function, though significant quality checks have been
-#'   implemented in an effort to produce a high-quality dataset.
+#'   implemented in an effort to produce a high-quality dataset. Users should work with these
+#'   data accordingly.
 #' 
 #'   With `join_outcomes = TRUE` (the default), the PDA data are attached to
 #'   FEMA's own structured records of which declaration requests were declared and
@@ -2567,7 +2766,7 @@ join_pda_outcomes = function(pda_df) {
 #'   which of these applied. Set `join_outcomes = FALSE` for the reports alone.
 #'
 #'   Data quality is reported through a single consolidated warning: how many
-#'   records carry values that may be incorrect -- each such record's specific
+#'   records carry values produced through a less-robust fallback mechanism -- each such record's specific
 #'   issue(s) are written to the `pda_warnings` column -- and how many PDA
 #'   reports could not be matched to an authoritative FEMA declaration or
 #'   denial and are therefore absent from the returned data.
@@ -2594,13 +2793,7 @@ join_pda_outcomes = function(pda_df) {
 #'   `fema_` for FEMA's own declaration and denial records, `pda_` for values
 #'   read out of the PDF reports. A column keeps the same name under either
 #'   setting. When `join_outcomes = FALSE`, the columns describing the FEMA
-#'   record or the match to it -- `fema_declaration_request_number`,
-#'   `fema_disaster_number`, `fema_state_name`,
-#'   `fema_state_fips`, `fema_decision`,
-#'   `fema_decision_date`, `fema_decision_year`, `fema_declaration_request_date`,
-#'   `fema_declaration_title`, `fema_requested_incident_types`, `fema_hazards`,
-#'   the eight `fema_*_declared`/`fema_*_requested` program fields,
-#'   `fema_tribal_request`, `pda_matched`, and `pda_match_quality` -- are absent, and three columns
+#'   record or the match to it are absent, and three columns
 #'   present only on that path take their place: `pda_disaster_number`, the
 #'   disaster number the report itself prints, and `pda_state_name` and
 #'   `pda_state_fips`, the state read out of the report text (described under
@@ -2609,13 +2802,8 @@ join_pda_outcomes = function(pda_df) {
 #'   Columns include:
 #'   \describe{
 #'     \item{fema_declaration_request_number}{FEMA's own identifier for the
-#'        declaration request, and the unique key of the returned data. It is
-#'        never missing and never shared by two records, for approvals and
-#'        denials alike, so it is the field to key an analysis on and the one to
-#'        join other datasets by. `fema_disaster_number` identifies an approval
-#'        just as well but is always NA on a denial. This column is absent when
-#'        `join_outcomes = FALSE`, since it comes from FEMA's records rather
-#'        than from a report; `pda_path` is the key of that output.}
+#'        declaration request, merged across approvals and denials. This is the unique key
+#'        for the disaster-level data.}
 #'     \item{fema_disaster_number}{FEMA disaster number. Denied requests are always NA.}
 #'     \item{fema_state_name}{The requesting state or territory. A tribal request carries
 #'        the state the tribe's lands lie in, as recorded by FEMA.}
@@ -2649,11 +2837,17 @@ join_pda_outcomes = function(pda_df) {
 #'        approved request joined on its disaster number; a denied request whose determination
 #'        date is the denial decision date within the same state; and a denied request whose
 #'        report names no state -- a tribal report names the tribe instead -- matched on the
-#'        determination date alone, where exactly one denial in the country shares that date
-#'        and it agrees with the report on hazard or shares a word with its title.
+#'        determination date alone, where exactly one denial in the country -- or in the states
+#'        the tribe's Census area lies in, where known -- shares that date and it agrees with the
+#'        report on hazard or shares a word with its title.
 #'        "approximate" is a denied request matched instead to the nearest denial of the same
 #'        hazard type within seven days either side of the date the report prints, and says how
-#'        many days apart the two records are. "manual" is a link established by hand.}
+#'        many days apart the two records are. A denied request whose date FEMA did not record
+#'        -- an original denial FEMA later updated to its appeal, or an appeal FEMA never recorded
+#'        -- is matched as "exact" on the filing date the report states, which is FEMA's request
+#'        date, within the same state; for a tribal report, the state is one the tribe's Census area
+#'        lies in. "manual" is a link established by hand, followed by the reason no rule could
+#'        make it.}
 #'     \item{pda_path}{The local file path to the source PDA PDF.}
 #'     \item{pda_decision}{One of "approved", "denial", "appeal_approved", or "appeal_denial".}
 #'     \item{pda_declaration_title}{The report's description of the event.}
@@ -2696,8 +2890,13 @@ join_pda_outcomes = function(pda_df) {
 #'     \item{pda_ia_residences_major_damage}{Number of residences with major damage.}
 #'     \item{pda_ia_residences_minor_damage}{Number of residences with minor damage.}
 #'     \item{pda_ia_residences_affected}{Number of residences affected (lowest damage category).}
-#'     \item{pda_ia_residences_insured_total_percent}{Percentage of impacted residences with any insurance coverage.}
-#'     \item{pda_ia_residences_insured_flood_percent}{Percentage of impacted residences with flood insurance coverage.}
+#'     \item{pda_ia_residences_insured_total_percent}{Percentage of impacted residences with insurance
+#'        coverage. A rate the report prints without a label is recorded here, though for a
+#'        flood-related event it may be the flood rate. This field is reported ambiguously in some
+#'        PDA reports and should be used with caution.}
+#'     \item{pda_ia_residences_insured_flood_percent}{Percentage of impacted residences with flood
+#'        insurance coverage, where the report labels a rate as flood coverage. This field is reported 
+#'        ambiguously in some PDA reports and should be used with caution..}
 #'     \item{pda_ia_households_poverty_percent}{Percentage of households in poverty (or low income,
 #'        depending on report vintage).}
 #'     \item{pda_ia_households_owner_percent}{Percentage of households that are owner-occupied.}
@@ -2909,4 +3108,5 @@ utils::globalVariables(c(
   "source_value", "imputed_value",
   "reports_stating_value", "can_impute", "pda_file", "report_exists",
   "denial_exists", "denial_claimed", "report_already_matched", "usable",
-  "linked_request_number", "shares_a_word"))
+  "linked_request_number", "shares_a_word", "request_date_stated",
+  "tribal_state_names", "denial_state_name"))

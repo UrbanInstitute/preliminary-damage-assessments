@@ -5,11 +5,13 @@ test_that("the event title keeps the event and drops everything else", {
     text = c(
       "Colorado wildfire report text",
       "North Carolina report text",
-      "Kentucky report text"),
+      "Kentucky report text",
+      "District of Columbia report text"),
     event_title = c(
       "Preliminary Damage Assessment Report - Colorado - Marshall Fire",
       "Flooding in North Carolina",
-      "Commonwealth of Kentucky Severe Storms and Flooding FEMA-4595-DR Declared July 29, 2022"))
+      "Commonwealth of Kentucky Severe Storms and Flooding FEMA-4595-DR Declared July 29, 2022",
+      "District of Columbia \u2013 Sewer Line Collapse"))
 
   cleaned <- add_pda_derived_columns(reports)
 
@@ -17,7 +19,11 @@ test_that("the event title keeps the event and drops everything else", {
   ## a state name inside the description is part of the description
   expect_equal(cleaned$event_title[2], "Flooding in North Carolina")
   expect_equal(cleaned$event_title[3], "Severe Storms and Flooding")
-  expect_equal(cleaned$state_name, c("Colorado", "North Carolina", "Kentucky"))
+  ## "District of" is part of the place name, not a prefix like "Commonwealth of"
+  expect_equal(cleaned$event_title[4], "Sewer Line Collapse")
+  expect_equal(
+    cleaned$state_name,
+    c("Colorado", "North Carolina", "Kentucky", "District of Columbia"))
 })
 
 test_that("hazard categories are consistent across differing source wordings", {
@@ -491,4 +497,50 @@ test_that("a title-case Public Assistance cost label is still read", {
 
   expect_equal(attributes_read$pa_cost_estimate_total, 28931081)
   expect_equal(attributes_read$pa_primary_impact, "Cost for debris removal")
+})
+
+test_that("insured rates are assigned by the layout of the insured-residences line", {
+  ## reads one report whose insured-residences line is `insured_line`
+  read_insured_rates <- function(insured_line) {
+    report_text <- c(
+      "Preliminary Damage Assessment Report\n",
+      "State of Missouri - Severe Storms and Flooding\n",
+      "FEMA-1736-DR Declared November 13, 2007\n",
+      "Summary of Damage Assessment Information: Individual Assistance ",
+      "Total Number of Residences Impacted:3 479 ",
+      "Destroyed - 18 Major Damage - 90 Minor Damage - 152 Affected - 219 ",
+      "Percentage of insured residences:4 ", insured_line, " ",
+      "Percentage of poverty households:5 19.1% ",
+      "The Preliminary Damage Assessment PDA process is a mechanism and the rest is boilerplate.")
+    testthat::local_mocked_bindings(
+      pdf_text = function(pdf, ...) report_text,
+      .package = "pdftools")
+    attributes_read <- extract_pda_attributes("PDAReport_FEMA-1736-DR-MO.pdf")
+    c(attributes_read$ia_residences_insured_total_percent,
+      attributes_read$ia_residences_insured_flood_percent)
+  }
+
+  ## a single unlabelled rate is taken as total coverage
+  expect_equal(read_insured_rates("12.0%"), c(12.0, NA))
+  ## a rate printed without its percent sign counts only where no rate on the
+  ## line carries one, so a page number beside a marked rate is ignored
+  expect_equal(read_insured_rates("59.3"), c(59.3, NA))
+  expect_equal(read_insured_rates("29.0% flood 0"), c(NA, 29.0))
+  ## a rate printed without its percent sign, and a stray number beside a
+  ## marked rate that is not one
+  expect_equal(read_insured_rates("59.3"), c(59.3, NA))
+  expect_equal(read_insured_rates("29.0% flood 0"), c(NA, 29.0))
+  ## a single rate labelled as flood, before or after the label, in either case
+  expect_equal(read_insured_rates("0.5% Flood"), c(NA, 0.5))
+  expect_equal(read_insured_rates("Flood 1.1%"), c(NA, 1.1))
+  expect_equal(read_insured_rates("18.0% flood"), c(NA, 18.0))
+  ## two rates: the second is the flood rate wherever the label falls
+  expect_equal(read_insured_rates("64.0% 1.1% Flood"), c(64.0, 1.1))
+  expect_equal(read_insured_rates("12.0% Flood 0.3%"), c(12.0, 0.3))
+  expect_equal(read_insured_rates("Homeowner’s 53.0% Flood 6.2%"), c(53.0, 6.2))
+  expect_equal(read_insured_rates("N/A 2.0% Flood"), c(NA, 2.0))
+  ## lines that cannot be read as one total and one flood rate stay empty
+  expect_equal(read_insured_rates("Marshall County 3.0% Flood Todd County 2.0% Flood"), c(NA_real_, NA_real_))
+  expect_equal(read_insured_rates("< 1%"), c(NA_real_, NA_real_))
+  expect_equal(read_insured_rates("-"), c(NA_real_, NA_real_))
 })
