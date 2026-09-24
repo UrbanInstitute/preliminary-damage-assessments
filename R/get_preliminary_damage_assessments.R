@@ -480,7 +480,7 @@ first_token = function(value) {
 #'
 #' @return A length-one character version string.
 #' @noRd
-pda_parser_version = function() { "0.1.2" }
+pda_parser_version = function() { "0.1.3" }
 
 #' Warn when a cached dataset was written by different parsing logic
 #'
@@ -674,6 +674,78 @@ extract_pda_attributes = function(path) {
     length(insured_rates) == 2 & flood_label_count == 1 ~ insured_rates[2],
     TRUE ~ NA_character_)
 
+  ## The government-assistance line is also read whole, and each rate is
+  ## assigned to the program printed beside it. FEMA varies the layout: one
+  ## unlabelled rate ("12.5%"), a rate per program either before or after the
+  ## program's name ("5.5% SSI 6.6% SNAP", "SSI – 6.2% SNAP – 14.9%"), a single
+  ## program ("2.4% SNAP"), further programs ("10.4% Medicaid and CHIP"), or
+  ## counts of people rather than rates ("5,035 SSI 33,479 SNAP"). The report's
+  ## two-column layout often prints values inside the label itself, as in
+  ## "Population receiving other government 5.5% SSI 0 assistance such as SSI
+  ## and SNAP: 6.6% SNAP", so the line is taken from the label's first words to
+  ## the next field and the rest of the label is then removed, which also keeps
+  ## the "SSI" and "SNAP" in the label from being read as labels on a value.
+  assistance_line = text %>%
+    stringr::str_extract(stringr::str_c(
+      "Population receiving other government.*?(?=",
+      "Pre-Disaster Unemployment|Age 65 and older|",
+      "Percentage of ownership households|",
+      "Total Individual Assistance cost estimate|$)")) %>%
+    stringr::str_remove("^Population receiving other government") %>%
+    stringr::str_remove("assistance such as SSI and SNAP:?") %>%
+    stringr::str_squish() %>%
+    dplyr::coalesce("")
+  assistance_programs = stringr::str_c(
+    "SSI|SNAP|TANF|Medicaid(?:\\s*(?:and|/)\\s*CHIP)?|CHIP|",
+    "Cash Public Assistance")
+  assistance_rate = "(?<![0-9.])[0-9]+(?:\\.[0-9]+)?"
+  ## Each rate is paired with the program named directly beside it, on
+  ## whichever side the report puts names, so that a stray footnote number
+  ## ("0") between two pairs is not read as a rate.
+  assistance_pairs = if (stringr::str_detect(
+      assistance_line, stringr::str_c("^(", assistance_programs, ")\\b"))) {
+    stringr::str_match_all(
+      assistance_line,
+      stringr::str_c(
+        "(", assistance_programs, ")\\s*(?::|", dash_class(), ")?\\s*(",
+        assistance_rate, ")\\s*%"))[[1]] %>%
+      { tibble::tibble(program = .[, 2], rate = .[, 3]) }
+  } else {
+    stringr::str_match_all(
+      assistance_line,
+      stringr::str_c(
+        "(", assistance_rate, ")\\s*%?\\s*(", assistance_programs, ")\\b"))[[1]] %>%
+      { tibble::tibble(program = .[, 3], rate = .[, 2]) } }
+  program_rate = function(program_name) {
+    rates = assistance_pairs$rate[assistance_pairs$program == program_name]
+    if (length(rates) == 1) rates else NA_character_ }
+  ## Where no program is named, a rate with a percent sign is the combined
+  ## figure. A number without one counts only where the line has neither a
+  ## marked rate nor a blank placeholder, so that the stray number in
+  ## "- 0" or "13.6 0" is not read.
+  unlabelled_marked = stringr::str_extract_all(
+    assistance_line, stringr::str_c(assistance_rate, "(?=\\s*%)"))[[1]]
+  unlabelled_unmarked = stringr::str_extract_all(
+    assistance_line, stringr::str_c(assistance_rate, "(?![0-9.%])"))[[1]]
+  is_blank = stringr::str_detect(
+    assistance_line, stringr::str_c("(^|\\s)", dash_class(), "(\\s|$)|N/A"))
+  unlabelled_rates = if (length(unlabelled_marked) > 0) {
+    unlabelled_marked
+  } else if (is_blank) {
+    character(0)
+  } else {
+    utils::head(unlabelled_unmarked, 1) }
+  ## Counts of people or households, and figures given county by county, are
+  ## not shares of the population and are not read.
+  is_count = stringr::str_detect(assistance_line, "[0-9],[0-9]{3}|County")
+
+  assistance_total = dplyr::case_when(
+    is_count | nrow(assistance_pairs) > 0 ~ NA_character_,
+    length(unlabelled_rates) == 1 ~ unlabelled_rates[1],
+    TRUE ~ NA_character_)
+  assistance_ssi = dplyr::if_else(is_count, NA_character_, program_rate("SSI"))
+  assistance_snap = dplyr::if_else(is_count, NA_character_, program_rate("SNAP"))
+
   result = tibble::tibble(
       path = path,
       disaster_number = dplyr::coalesce(
@@ -718,9 +790,9 @@ extract_pda_attributes = function(path) {
       ia_households_owner_percent = text %>% extract_value(
         term1 = "Percentage of ownership households:",
         term2 = "Population receiving other government|Pre-Disaster Unemployment|Total Individual Assistance cost estimate|Disability:"),
-      ia_population_other_government_assistance_percent = text %>% extract_value(
-        term1 = "Population receiving other government\\s+assistance such as SSI and SNAP:",
-        term2 = "Pre-Disaster Unemployment|Age 65 and older:|Total Individual Assistance cost estimate"),
+      ia_population_other_government_assistance_percent = assistance_total,
+      ia_population_ssi_percent = assistance_ssi,
+      ia_population_snap_percent = assistance_snap,
       ia_pre_disaster_unemployment_percent = text %>% extract_value(term1 = "Pre-Disaster Unemployment", term2 = "Age 65 and older:"),
       ia_65plus_percent = text %>% extract_value(term1 = "Age 65 and older:", term2 = "Age 18 and under:"),
       ia_18below_percent = text %>% extract_value(term1 = "Age 18 and under:", term2 = "Disability:"),
@@ -1206,6 +1278,7 @@ check_pda_quality = function(pda_df) {
   zero_impossible_columns = c(
     "ia_households_poverty_percent", "ia_households_owner_percent",
     "ia_population_other_government_assistance_percent",
+    "ia_population_ssi_percent", "ia_population_snap_percent",
     "ia_pre_disaster_unemployment_percent", "ia_65plus_percent",
     "ia_18below_percent", "ia_disability_percent") %>%
     purrr::keep(has)
@@ -1229,6 +1302,18 @@ check_pda_quality = function(pda_df) {
       stringr::str_c(
         "the total and flood insured rates are the same, which is unlikely; ",
         "one rate may have been read into both fields")) }
+
+  ## 8b. An SSI rate above the SNAP rate, or above 25%. SSI rarely covers more
+  ## than a few percent of a population, while SNAP usually covers a tenth or
+  ## more, so either usually means the report printed a different measure under the SSI
+  ## label or the two figures were swapped.
+  if (has("ia_population_ssi_percent") && has("ia_population_snap_percent")) {
+    flag_rows(
+      pda_df$ia_population_ssi_percent > pda_df$ia_population_snap_percent |
+        pda_df$ia_population_ssi_percent > 25,
+      stringr::str_c(
+        "the SSI rate is above the SNAP rate or above 25%, which is unlikely; ",
+        "the report may print a different measure or have the two swapped")) }
 
   ## 9. Single values far above the rest of their column.
   purrr::walk(measure_columns, function(column) {
@@ -2901,7 +2986,16 @@ join_pda_outcomes = function(pda_df) {
 #'        depending on report vintage).}
 #'     \item{pda_ia_households_owner_percent}{Percentage of households that are owner-occupied.}
 #'     \item{pda_ia_population_other_government_assistance_percent}{Percentage of the population receiving
-#'        other government assistance (e.g. SSI, SNAP).}
+#'        other government assistance (e.g. SSI, SNAP), where the report prints a single rate
+#'        without naming a program. NA where the report gives separate rates by program instead;
+#'        see the SSI and SNAP columns. It is not the sum of those two rates, because one
+#'        person can receive both.}
+#'     \item{pda_ia_population_ssi_percent}{Percentage of the population receiving Supplemental
+#'        Security Income (SSI), where the report labels a rate as SSI. Reports that give counts of
+#'        recipients rather than rates, or that give figures county by county, are recorded as NA.}
+#'     \item{pda_ia_population_snap_percent}{Percentage of the population receiving Supplemental
+#'        Nutrition Assistance Program (SNAP) benefits, where the report labels a rate as SNAP.
+#'        Recorded as NA under the same conditions as the SSI column.}
 #'     \item{pda_ia_pre_disaster_unemployment_percent}{Pre-disaster unemployment rate.}
 #'     \item{pda_ia_65plus_percent}{Percentage of the population age 65 and older.}
 #'     \item{pda_ia_18below_percent}{Percentage of the population age 18 and under.}

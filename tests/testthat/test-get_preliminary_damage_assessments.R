@@ -544,3 +544,78 @@ test_that("insured rates are assigned by the layout of the insured-residences li
   expect_equal(read_insured_rates("< 1%"), c(NA_real_, NA_real_))
   expect_equal(read_insured_rates("-"), c(NA_real_, NA_real_))
 })
+
+test_that("government assistance rates are assigned to the program printed beside them", {
+  ## reads one report whose government-assistance field is `assistance_line`,
+  ## given as the text that follows "Population receiving other government" --
+  ## the report's two-column layout often prints values inside the label
+  read_assistance_rates <- function(assistance_line) {
+    report_text <- c(
+      "Preliminary Damage Assessment Report\n",
+      "State of Nebraska - Severe Storms\n",
+      "FEMA-4778-DR Declared June 28, 2024\n",
+      "Summary of Damage Assessment Information: Individual Assistance ",
+      "Percentage of ownership households:6 71.0% ",
+      "Population receiving other government ", assistance_line, " ",
+      "Pre-Disaster Unemployment: 2.9% ",
+      "Age 65 and older: 16.0% ",
+      "The Preliminary Damage Assessment PDA process is a mechanism and the rest is boilerplate.")
+    testthat::local_mocked_bindings(
+      pdf_text = function(pdf, ...) report_text,
+      .package = "pdftools")
+    attributes_read <- extract_pda_attributes("PDAReport_FEMA4778DR-NE.pdf")
+    c(attributes_read$ia_population_other_government_assistance_percent,
+      attributes_read$ia_population_ssi_percent,
+      attributes_read$ia_population_snap_percent)
+  }
+
+  ## a single unlabelled rate is the combined figure, with or without a stray
+  ## number printed inside the label
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: 12.5%"), c(12.5, NA, NA))
+  expect_equal(read_assistance_rates("0 assistance such as SSI and SNAP: 23.9%"), c(23.9, NA, NA))
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: 13.6 0"), c(13.6, NA, NA))
+  ## DR-4778: an SSI rate inside the label, a stray footnote number, and a SNAP
+  ## rate after it
+  expect_equal(
+    read_assistance_rates("5.5% SSI 0 assistance such as SSI and SNAP: 6.6% SNAP"),
+    c(NA, 5.5, 6.6))
+  ## both rates after the label, in either order, and a rate missing its
+  ## percent sign
+  expect_equal(
+    read_assistance_rates("assistance such as SSI and SNAP: 3.40% SSI and 14.59% SNAP"),
+    c(NA, 3.4, 14.59))
+  expect_equal(
+    read_assistance_rates("0 assistance such as SSI and SNAP: 10.2% SNAP 2.3% SSI"),
+    c(NA, 2.3, 10.2))
+  expect_equal(
+    read_assistance_rates("4.1 SSI assistance such as SSI and SNAP: 13.4% SNAP"),
+    c(NA, 4.1, 13.4))
+  ## the program named before its rate
+  expect_equal(
+    read_assistance_rates("SSI – 6.2% assistance such as SSI and SNAP: SNAP – 14.9%"),
+    c(NA, 6.2, 14.9))
+  expect_equal(
+    read_assistance_rates("SSI: 0.99% assistance such as SSI and SNAP: SNAP: 5.11%"),
+    c(NA, 0.99, 5.11))
+  ## rates for further programs are not read into the SSI or SNAP columns
+  expect_equal(
+    read_assistance_rates(
+      "TANF – 0.2% Medicaid and CHIP – 16.6% 0 assistance such as SSI and SNAP: SSI – 2.2% SNAP – 13.0%"),
+    c(NA, 2.2, 13.0))
+  expect_equal(
+    read_assistance_rates(
+      "1.4% SSI 10.4% Medicaid and CHIP assistance such as SSI and SNAP: 8.6% SNAP"),
+    c(NA, 1.4, 8.6))
+  ## a single program's rate is not the combined figure
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: 2.4% SNAP"), c(NA, NA, 2.4))
+  ## counts, county breakdowns, blanks, and two unlabelled rates stay empty
+  expect_equal(
+    read_assistance_rates("5,035 SSI assistance such as SSI and SNAP: 33,479 SNAP 0"),
+    rep(NA_real_, 3))
+  expect_equal(
+    read_assistance_rates("assistance such as SSI and SNAP: 2,636 Bradley County 8,344 Hamilton County"),
+    rep(NA_real_, 3))
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: - 0"), rep(NA_real_, 3))
+  expect_equal(read_assistance_rates("0 assistance such as SSI and SNAP: N/A"), rep(NA_real_, 3))
+  expect_equal(read_assistance_rates("7.0% assistance such as SSI and SNAP: 34.2% 0"), rep(NA_real_, 3))
+})

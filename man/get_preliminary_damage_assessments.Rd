@@ -155,7 +155,16 @@ insurance coverage, where the report labels a rate as flood coverage; see Detail
 depending on report vintage).}
 \item{pda_ia_households_owner_percent}{Percentage of households that are owner-occupied.}
 \item{pda_ia_population_other_government_assistance_percent}{Percentage of the population receiving
-other government assistance (e.g. SSI, SNAP).}
+other government assistance (e.g. SSI, SNAP), where the report prints a single rate
+without naming a program. NA where the report gives separate rates by program instead;
+see the SSI and SNAP columns. It is not the sum of those two rates, because one
+person can receive both.}
+\item{pda_ia_population_ssi_percent}{Percentage of the population receiving Supplemental
+Security Income (SSI), where the report labels a rate as SSI. Reports that give counts of
+recipients rather than rates, or that give figures county by county, are recorded as NA.}
+\item{pda_ia_population_snap_percent}{Percentage of the population receiving Supplemental
+Nutrition Assistance Program (SNAP) benefits, where the report labels a rate as SNAP.
+Recorded as NA under the same conditions as the SSI column.}
 \item{pda_ia_pre_disaster_unemployment_percent}{Pre-disaster unemployment rate.}
 \item{pda_ia_65plus_percent}{Percentage of the population age 65 and older.}
 \item{pda_ia_18below_percent}{Percentage of the population age 18 and under.}
