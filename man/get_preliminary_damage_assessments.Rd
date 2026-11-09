@@ -2,7 +2,7 @@
 % Please edit documentation in R/get_preliminary_damage_assessments.R
 \name{get_preliminary_damage_assessments}
 \alias{get_preliminary_damage_assessments}
-\title{Get FEMA Preliminary Damage Assessments Report Data}
+\title{Get FEMA Preliminary Damage Assessment Report Data}
 \usage{
 get_preliminary_damage_assessments(
   file_path,
@@ -44,6 +44,7 @@ record or the match to it -- \code{fema_declaration_request_number},
 \code{fema_decision_date}, \code{fema_decision_year}, \code{fema_declaration_request_date},
 \code{fema_declaration_title}, \code{fema_requested_incident_types}, \code{fema_hazards},
 the eight \verb{fema_*_declared}/\verb{fema_*_requested} program fields,
+\code{fema_designated_area_count}, \code{fema_ihp_declared_area_count},
 \code{fema_tribal_request}, \code{pda_matched}, and \code{pda_match_quality} -- are absent, and three columns
 present only on that path take their place: \code{pda_disaster_number}, the
 disaster number the report itself prints, and \code{pda_state_name} and
@@ -76,8 +77,17 @@ types (denied records only).}
 \item{fema_ihp_declared, fema_ia_declared, fema_pa_declared, fema_hm_declared}{FEMA's
 record of whether the declaration authorized the Individuals and Households Program,
 the (pre-2002) Individual Assistance program, Public Assistance, and Hazard
-Mitigation. NA for denied requests. A program can be declared without appearing in the
+Mitigation. NA for denied requests. FEMA turns programs on area by area, so a
+program is TRUE here when at least one designated area of the declaration received
+it; \code{\link[=transform_pda_counties]{transform_pda_counties()}} gives the flags for each area. These flags record
+FEMA's current record of the declaration, including programs added by later
+amendments. A program can be declared without appearing in the
 PDA -- added by a later request -- so these legitimately diverge from the \verb{pda_*_requested} flags.}
+\item{fema_designated_area_count}{The number of distinct designated areas (usually
+counties, also tribal areas and statewide designations) FEMA lists for the
+declaration. NA for denied requests.}
+\item{fema_ihp_declared_area_count}{How many of those designated areas received the
+Individuals and Households Program. NA for denied requests.}
 \item{fema_ihp_requested, fema_ia_requested, fema_pa_requested, fema_hm_requested}{FEMA's
 record of the programs the denied request asked for. NA for approvals.
 Requests for the Individual Assistance umbrella programs are recorded under
@@ -93,11 +103,17 @@ request.}
 approved request joined on its disaster number; a denied request whose determination
 date is the denial decision date within the same state; and a denied request whose
 report names no state -- a tribal report names the tribe instead -- matched on the
-determination date alone, where exactly one denial in the country shares that date
-and it agrees with the report on hazard or shares a word with its title.
+determination date alone, where exactly one denial in the country -- or in the states
+the tribe's Census area lies in, where known -- shares that date and it agrees with the
+report on hazard or shares a word with its title.
 "approximate" is a denied request matched instead to the nearest denial of the same
 hazard type within seven days either side of the date the report prints, and says how
-many days apart the two records are. "manual" is a link established by hand.}
+many days apart the two records are. A denied request whose date FEMA did not record
+-- an original denial FEMA later updated to its appeal, or an appeal FEMA never recorded
+-- is matched as "exact" on the filing date the report states, which is FEMA's request
+date, within the same state; for a tribal report, the state is one the tribe's Census area
+lies in. "manual" is a link established by hand, followed by the reason no rule could
+make it.}
 \item{pda_path}{The local file path to the source PDA PDF.}
 \item{pda_decision}{One of "approved", "denial", "appeal_approved", or "appeal_denial".}
 \item{pda_declaration_title}{The report's description of the event.}
@@ -140,13 +156,25 @@ values while the narrative does not name the program. }
 \item{pda_ia_residences_major_damage}{Number of residences with major damage.}
 \item{pda_ia_residences_minor_damage}{Number of residences with minor damage.}
 \item{pda_ia_residences_affected}{Number of residences affected (lowest damage category).}
-\item{pda_ia_residences_insured_total_percent}{Percentage of impacted residences with any insurance coverage.}
-\item{pda_ia_residences_insured_flood_percent}{Percentage of impacted residences with flood insurance coverage.}
+\item{pda_ia_residences_insured_total_percent}{Percentage of impacted residences with insurance
+coverage. A rate the report prints without a label is recorded here, though for a
+flood-related event it may be the flood rate; see Details.}
+\item{pda_ia_residences_insured_flood_percent}{Percentage of impacted residences with flood
+insurance coverage, where the report labels a rate as flood coverage; see Details.}
 \item{pda_ia_households_poverty_percent}{Percentage of households in poverty (or low income,
 depending on report vintage).}
 \item{pda_ia_households_owner_percent}{Percentage of households that are owner-occupied.}
 \item{pda_ia_population_other_government_assistance_percent}{Percentage of the population receiving
-other government assistance (e.g. SSI, SNAP).}
+other government assistance (e.g. SSI, SNAP), where the report prints a single rate
+without naming a program. NA where the report gives separate rates by program instead;
+see the SSI and SNAP columns. It is not the sum of those two rates, because one
+person can receive both.}
+\item{pda_ia_population_ssi_percent}{Percentage of the population receiving Supplemental
+Security Income (SSI), where the report labels a rate as SSI. Reports that give counts of
+recipients rather than rates, or that give figures county by county, are recorded as NA.}
+\item{pda_ia_population_snap_percent}{Percentage of the population receiving Supplemental
+Nutrition Assistance Program (SNAP) benefits, where the report labels a rate as SNAP.
+Recorded as NA under the same conditions as the SSI column.}
 \item{pda_ia_pre_disaster_unemployment_percent}{Pre-disaster unemployment rate.}
 \item{pda_ia_65plus_percent}{Percentage of the population age 65 and older.}
 \item{pda_ia_18below_percent}{Percentage of the population age 18 and under.}
@@ -181,6 +209,22 @@ it is matched on state, on the decision date the report prints, and on
 agreement between the hazards the two records describe, with anything
 ambiguous left unmatched; \code{match_quality} records
 which of these applied. Set \code{join_outcomes = FALSE} for the reports alone.
+
+Insurance coverage is the least consistently reported field. Reports print
+one or two rates on the insured-residences line, labelled or not, in
+varying order ("12.0\%", "0.5\% Flood", "64.0\% 1.1\% Flood", "12.0\% Flood
+0.3\%", "Homeowner's 53.0\% Flood 6.2\%"). A rate labelled as flood coverage
+is recorded as the flood rate; where two rates appear, the first is
+recorded as the total rate and the second as the flood rate, which holds in
+every observed layout. A single unlabelled rate is recorded as the total
+rate. The report does not say which coverage that rate measures: for
+events other than flooding it is very likely homeowner's coverage, but for
+flood-related events the values mix what look like flood and homeowner's
+rates. Lines that cannot be read this way (rates listed county by county,
+two rates with no flood label, or a bound such as "< 1\%") are left empty.
+Compare total insured rates across events with caution, especially for
+flood-related hazards, and do not read a missing flood rate as zero flood
+coverage.
 
 Data quality is reported through a single consolidated warning: how many
 records carry values that may be incorrect -- each such record's specific

@@ -5,11 +5,13 @@ test_that("the event title keeps the event and drops everything else", {
     text = c(
       "Colorado wildfire report text",
       "North Carolina report text",
-      "Kentucky report text"),
+      "Kentucky report text",
+      "District of Columbia report text"),
     event_title = c(
       "Preliminary Damage Assessment Report - Colorado - Marshall Fire",
       "Flooding in North Carolina",
-      "Commonwealth of Kentucky Severe Storms and Flooding FEMA-4595-DR Declared July 29, 2022"))
+      "Commonwealth of Kentucky Severe Storms and Flooding FEMA-4595-DR Declared July 29, 2022",
+      "District of Columbia \u2013 Sewer Line Collapse"))
 
   cleaned <- add_pda_derived_columns(reports)
 
@@ -17,7 +19,11 @@ test_that("the event title keeps the event and drops everything else", {
   ## a state name inside the description is part of the description
   expect_equal(cleaned$event_title[2], "Flooding in North Carolina")
   expect_equal(cleaned$event_title[3], "Severe Storms and Flooding")
-  expect_equal(cleaned$state_name, c("Colorado", "North Carolina", "Kentucky"))
+  ## "District of" is part of the place name, not a prefix like "Commonwealth of"
+  expect_equal(cleaned$event_title[4], "Sewer Line Collapse")
+  expect_equal(
+    cleaned$state_name,
+    c("Colorado", "North Carolina", "Kentucky", "District of Columbia"))
 })
 
 test_that("hazard categories are consistent across differing source wordings", {
@@ -491,4 +497,192 @@ test_that("a title-case Public Assistance cost label is still read", {
 
   expect_equal(attributes_read$pa_cost_estimate_total, 28931081)
   expect_equal(attributes_read$pa_primary_impact, "Cost for debris removal")
+})
+
+test_that("insured rates are assigned by the layout of the insured-residences line", {
+  ## reads one report whose insured-residences line is `insured_line`
+  read_insured_rates <- function(insured_line) {
+    report_text <- c(
+      "Preliminary Damage Assessment Report\n",
+      "State of Missouri - Severe Storms and Flooding\n",
+      "FEMA-1736-DR Declared November 13, 2007\n",
+      "Summary of Damage Assessment Information: Individual Assistance ",
+      "Total Number of Residences Impacted:3 479 ",
+      "Destroyed - 18 Major Damage - 90 Minor Damage - 152 Affected - 219 ",
+      "Percentage of insured residences:4 ", insured_line, " ",
+      "Percentage of poverty households:5 19.1% ",
+      "The Preliminary Damage Assessment PDA process is a mechanism and the rest is boilerplate.")
+    testthat::local_mocked_bindings(
+      pdf_text = function(pdf, ...) report_text,
+      .package = "pdftools")
+    attributes_read <- extract_pda_attributes("PDAReport_FEMA-1736-DR-MO.pdf")
+    c(attributes_read$ia_residences_insured_total_percent,
+      attributes_read$ia_residences_insured_flood_percent)
+  }
+
+  ## a single unlabelled rate is taken as total coverage
+  expect_equal(read_insured_rates("12.0%"), c(12.0, NA))
+  ## a rate printed without its percent sign counts only where no rate on the
+  ## line carries one, so a page number beside a marked rate is ignored
+  expect_equal(read_insured_rates("59.3"), c(59.3, NA))
+  expect_equal(read_insured_rates("29.0% flood 0"), c(NA, 29.0))
+  ## a rate printed without its percent sign, and a stray number beside a
+  ## marked rate that is not one
+  expect_equal(read_insured_rates("59.3"), c(59.3, NA))
+  expect_equal(read_insured_rates("29.0% flood 0"), c(NA, 29.0))
+  ## a single rate labelled as flood, before or after the label, in either case
+  expect_equal(read_insured_rates("0.5% Flood"), c(NA, 0.5))
+  expect_equal(read_insured_rates("Flood 1.1%"), c(NA, 1.1))
+  expect_equal(read_insured_rates("18.0% flood"), c(NA, 18.0))
+  ## two rates: the second is the flood rate wherever the label falls
+  expect_equal(read_insured_rates("64.0% 1.1% Flood"), c(64.0, 1.1))
+  expect_equal(read_insured_rates("12.0% Flood 0.3%"), c(12.0, 0.3))
+  expect_equal(read_insured_rates("Homeowner’s 53.0% Flood 6.2%"), c(53.0, 6.2))
+  expect_equal(read_insured_rates("N/A 2.0% Flood"), c(NA, 2.0))
+  ## lines that cannot be read as one total and one flood rate stay empty
+  expect_equal(read_insured_rates("Marshall County 3.0% Flood Todd County 2.0% Flood"), c(NA_real_, NA_real_))
+  expect_equal(read_insured_rates("< 1%"), c(NA_real_, NA_real_))
+  expect_equal(read_insured_rates("-"), c(NA_real_, NA_real_))
+})
+
+test_that("government assistance rates are assigned to the program printed beside them", {
+  ## reads one report whose government-assistance field is `assistance_line`,
+  ## given as the text that follows "Population receiving other government" --
+  ## the report's two-column layout often prints values inside the label
+  read_assistance_rates <- function(assistance_line) {
+    report_text <- c(
+      "Preliminary Damage Assessment Report\n",
+      "State of Nebraska - Severe Storms\n",
+      "FEMA-4778-DR Declared June 28, 2024\n",
+      "Summary of Damage Assessment Information: Individual Assistance ",
+      "Percentage of ownership households:6 71.0% ",
+      "Population receiving other government ", assistance_line, " ",
+      "Pre-Disaster Unemployment: 2.9% ",
+      "Age 65 and older: 16.0% ",
+      "The Preliminary Damage Assessment PDA process is a mechanism and the rest is boilerplate.")
+    testthat::local_mocked_bindings(
+      pdf_text = function(pdf, ...) report_text,
+      .package = "pdftools")
+    attributes_read <- extract_pda_attributes("PDAReport_FEMA4778DR-NE.pdf")
+    c(attributes_read$ia_population_other_government_assistance_percent,
+      attributes_read$ia_population_ssi_percent,
+      attributes_read$ia_population_snap_percent)
+  }
+
+  ## a single unlabelled rate is the combined figure, with or without a stray
+  ## number printed inside the label
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: 12.5%"), c(12.5, NA, NA))
+  expect_equal(read_assistance_rates("0 assistance such as SSI and SNAP: 23.9%"), c(23.9, NA, NA))
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: 13.6 0"), c(13.6, NA, NA))
+  ## DR-4778: an SSI rate inside the label, a stray footnote number, and a SNAP
+  ## rate after it
+  expect_equal(
+    read_assistance_rates("5.5% SSI 0 assistance such as SSI and SNAP: 6.6% SNAP"),
+    c(NA, 5.5, 6.6))
+  ## both rates after the label, in either order, and a rate missing its
+  ## percent sign
+  expect_equal(
+    read_assistance_rates("assistance such as SSI and SNAP: 3.40% SSI and 14.59% SNAP"),
+    c(NA, 3.4, 14.59))
+  expect_equal(
+    read_assistance_rates("0 assistance such as SSI and SNAP: 10.2% SNAP 2.3% SSI"),
+    c(NA, 2.3, 10.2))
+  expect_equal(
+    read_assistance_rates("4.1 SSI assistance such as SSI and SNAP: 13.4% SNAP"),
+    c(NA, 4.1, 13.4))
+  ## the program named before its rate
+  expect_equal(
+    read_assistance_rates("SSI – 6.2% assistance such as SSI and SNAP: SNAP – 14.9%"),
+    c(NA, 6.2, 14.9))
+  expect_equal(
+    read_assistance_rates("SSI: 0.99% assistance such as SSI and SNAP: SNAP: 5.11%"),
+    c(NA, 0.99, 5.11))
+  ## rates for further programs are not read into the SSI or SNAP columns
+  expect_equal(
+    read_assistance_rates(
+      "TANF – 0.2% Medicaid and CHIP – 16.6% 0 assistance such as SSI and SNAP: SSI – 2.2% SNAP – 13.0%"),
+    c(NA, 2.2, 13.0))
+  expect_equal(
+    read_assistance_rates(
+      "1.4% SSI 10.4% Medicaid and CHIP assistance such as SSI and SNAP: 8.6% SNAP"),
+    c(NA, 1.4, 8.6))
+  ## a single program's rate is not the combined figure
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: 2.4% SNAP"), c(NA, NA, 2.4))
+  ## counts, county breakdowns, blanks, and two unlabelled rates stay empty
+  expect_equal(
+    read_assistance_rates("5,035 SSI assistance such as SSI and SNAP: 33,479 SNAP 0"),
+    rep(NA_real_, 3))
+  expect_equal(
+    read_assistance_rates("assistance such as SSI and SNAP: 2,636 Bradley County 8,344 Hamilton County"),
+    rep(NA_real_, 3))
+  expect_equal(read_assistance_rates("assistance such as SSI and SNAP: - 0"), rep(NA_real_, 3))
+  expect_equal(read_assistance_rates("0 assistance such as SSI and SNAP: N/A"), rep(NA_real_, 3))
+  expect_equal(read_assistance_rates("7.0% assistance such as SSI and SNAP: 34.2% 0"), rep(NA_real_, 3))
+})
+
+test_that("a program counts as declared when any designated area of the declaration has it", {
+  report_text <- c(
+    "Preliminary Damage Assessment Report\n",
+    "State of Missouri - Severe Storms and Flooding\n",
+    "FEMA-1736-DR Declared November 13, 2007\n",
+    "On October 30, 2007, Governor Matt Blunt requested a major disaster declaration due to severe storms. ",
+    "The Governor requested a declaration for Individual Assistance for two counties and Public Assistance for two counties. ",
+    "Summary of Damage Assessment Information: Individual Assistance ",
+    "Total Number of Residences Impacted:3 479 ",
+    "Public Assistance: Total Public Assistance Cost Estimate: $28,931,081 ",
+    "The Preliminary Damage Assessment PDA process is a mechanism and the rest is boilerplate.")
+
+  ## FEMA's declarations record has one row per designated area. The first
+  ## area listed did not receive the Individuals and Households Program, so a
+  ## flag read from that row alone would wrongly say the program was not
+  ## declared.
+  declarations <- tibble::tibble(
+    disasterNumber = 1736, declarationRequestNumber = "07093",
+    state = "MO", declarationDate = "2007-11-13T00:00:00.000Z",
+    declarationTitle = "SEVERE STORMS AND FLOODING",
+    designatedArea = c("Adair (County)", "Boone (County)", "Cole (County)"),
+    ihProgramDeclared = c(FALSE, TRUE, TRUE), iaProgramDeclared = FALSE,
+    paProgramDeclared = TRUE, hmProgramDeclared = c(FALSE, FALSE, TRUE),
+    tribalRequest = FALSE)
+  denials <- tibble::tibble(
+    declarationRequestNumber = "07100", state = "Missouri",
+    declarationRequestDate = "2007-10-01T00:00:00.000Z",
+    requestStatusDate = "2007-10-20T00:00:00.000Z",
+    incidentName = "Flooding", requestedIncidentTypes = "Flood",
+    currentRequestStatus = "Turndown", declarationRequestType = "Major Disaster",
+    ihProgramRequested = TRUE, iaProgramRequested = FALSE,
+    paProgramRequested = TRUE, hmProgramRequested = FALSE, tribalRequest = FALSE)
+
+  testthat::local_mocked_bindings(
+    pdf_text = function(pdf, ...) report_text,
+    .package = "pdftools")
+  testthat::local_mocked_bindings(
+    open_fema = function(data_set, ...) {
+      if (data_set == "DeclarationDenials") denials else declarations },
+    .package = "rfema")
+
+  ## the same steps `get_preliminary_damage_assessments()` runs before the join
+  pda_df <- extract_pda_attributes("PDAReport_FEMA-1736-DR-MO.pdf") %>%
+    correct_duplicate_disaster_numbers() %>%
+    resolve_requested_flags() %>%
+    check_pda_quality() %>%
+    add_pda_derived_columns() %>%
+    impute_per_capita_indicators() %>%
+    add_pda_summary_measures()
+
+  joined <- suppressWarnings(suppressMessages(join_pda_outcomes(pda_df)))
+  approved <- joined %>% dplyr::filter(fema_decision == "Approved")
+  denied <- joined %>% dplyr::filter(fema_decision == "Denied")
+
+  ## one row per request, not one per designated area
+  expect_equal(nrow(approved), 1)
+  expect_true(approved$fema_ihp_declared)
+  expect_true(approved$fema_hm_declared)
+  expect_true(approved$fema_pa_declared)
+  expect_false(approved$fema_ia_declared)
+  expect_equal(approved$fema_designated_area_count, 3)
+  expect_equal(approved$fema_ihp_declared_area_count, 2)
+  ## a denied request has no designated areas
+  expect_true(is.na(denied$fema_ihp_declared))
+  expect_true(is.na(denied$fema_ihp_declared_area_count))
 })

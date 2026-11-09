@@ -130,6 +130,29 @@ test_that("damage categories summing past the impacted total are flagged", {
   expect_match(checked$warnings[2], "sum to more than the stated total")
 })
 
+test_that("an SSI rate above the SNAP rate or above 25% is flagged", {
+  reports <- tibble::tibble(
+    path = c("a.pdf", "b.pdf", "c.pdf", "d.pdf"),
+    disaster_number = c("4001", "4002", "4003", "4004"),
+    event_type = "approved",
+    event_title = "title",
+    event_native_flag = 0,
+    text = "text",
+    ia_requested = 1,
+    pa_requested = 1,
+    ## row b: SSI above SNAP; row c: SSI above 25% with no SNAP rate; row d:
+    ## only a SNAP rate
+    ia_population_ssi_percent = c(5.5, 26.0, 31.5, NA),
+    ia_population_snap_percent = c(6.6, 8.0, NA, 12.1))
+
+  checked <- check_pda_quality(reports)
+
+  expect_true(is.na(checked$warnings[1]))
+  expect_match(checked$warnings[2], "SSI rate is above the SNAP rate")
+  expect_match(checked$warnings[3], "SSI rate is above the SNAP rate")
+  expect_true(is.na(checked$warnings[4]))
+})
+
 test_that("a duplicated source path and a shared approved number are flagged", {
   reports <- tibble::tibble(
     path = c("a.pdf", "a.pdf", "b.pdf"),
