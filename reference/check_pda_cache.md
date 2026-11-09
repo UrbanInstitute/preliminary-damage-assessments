@@ -1,7 +1,7 @@
 # Compare the Local PDF Cache Against the Number of Reports FEMA Lists
 
 Compares the FEMA-reported number of reports to the number of PDF files
-in `cache_directory`.
+in `cache_directory` to assess whether the cache is up to date.
 
 ## Usage
 

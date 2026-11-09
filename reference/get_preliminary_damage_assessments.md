@@ -1,4 +1,4 @@
-# Get FEMA Preliminary Damage Assessments Report Data
+# Get FEMA Preliminary Damage Assessment Report Data
 
 Returns structured data extracted from PDF preliminary damage assessment
 (PDA) reports.
@@ -59,6 +59,7 @@ record or the match to it – `fema_declaration_request_number`,
 `fema_declaration_request_date`, `fema_declaration_title`,
 `fema_requested_incident_types`, `fema_hazards`, the eight
 `fema_*_declared`/`fema_*_requested` program fields,
+`fema_designated_area_count`, `fema_ihp_declared_area_count`,
 `fema_tribal_request`, `pda_matched`, and `pda_match_quality` – are
 absent, and three columns present only on that path take their place:
 `pda_disaster_number`, the disaster number the report itself prints, and
@@ -125,10 +126,26 @@ which hold FEMA's own value for a joined record). Columns include:
 
   FEMA's record of whether the declaration authorized the Individuals
   and Households Program, the (pre-2002) Individual Assistance program,
-  Public Assistance, and Hazard Mitigation. NA for denied requests. A
-  program can be declared without appearing in the PDA – added by a
-  later request – so these legitimately diverge from the
+  Public Assistance, and Hazard Mitigation. NA for denied requests. FEMA
+  turns programs on area by area, so a program is TRUE here when at
+  least one designated area of the declaration received it;
+  [`transform_pda_counties()`](https://UrbanInstitute.github.io/preliminary-damage-assessments/reference/transform_pda_counties.md)
+  gives the flags for each area. These flags record FEMA's current
+  record of the declaration, including programs added by later
+  amendments. A program can be declared without appearing in the PDA –
+  added by a later request – so these legitimately diverge from the
   `pda_*_requested` flags.
+
+- fema_designated_area_count:
+
+  The number of distinct designated areas (usually counties, also tribal
+  areas and statewide designations) FEMA lists for the declaration. NA
+  for denied requests.
+
+- fema_ihp_declared_area_count:
+
+  How many of those designated areas received the Individuals and
+  Households Program. NA for denied requests.
 
 - fema_ihp_requested, fema_ia_requested, fema_pa_requested,
   fema_hm_requested:
@@ -160,12 +177,18 @@ which hold FEMA's own value for a joined record). Columns include:
   denial decision date within the same state; and a denied request whose
   report names no state – a tribal report names the tribe instead –
   matched on the determination date alone, where exactly one denial in
-  the country shares that date and it agrees with the report on hazard
-  or shares a word with its title. "approximate" is a denied request
+  the country – or in the states the tribe's Census area lies in, where
+  known – shares that date and it agrees with the report on hazard or
+  shares a word with its title. "approximate" is a denied request
   matched instead to the nearest denial of the same hazard type within
   seven days either side of the date the report prints, and says how
-  many days apart the two records are. "manual" is a link established by
-  hand.
+  many days apart the two records are. A denied request whose date FEMA
+  did not record – an original denial FEMA later updated to its appeal,
+  or an appeal FEMA never recorded – is matched as "exact" on the filing
+  date the report states, which is FEMA's request date, within the same
+  state; for a tribal report, the state is one the tribe's Census area
+  lies in. "manual" is a link established by hand, followed by the
+  reason no rule could make it.
 
 - pda_path:
 
@@ -288,11 +311,14 @@ which hold FEMA's own value for a joined record). Columns include:
 
 - pda_ia_residences_insured_total_percent:
 
-  Percentage of impacted residences with any insurance coverage.
+  Percentage of impacted residences with insurance coverage. A rate the
+  report prints without a label is recorded here, though for a
+  flood-related event it may be the flood rate; see Details.
 
 - pda_ia_residences_insured_flood_percent:
 
-  Percentage of impacted residences with flood insurance coverage.
+  Percentage of impacted residences with flood insurance coverage, where
+  the report labels a rate as flood coverage; see Details.
 
 - pda_ia_households_poverty_percent:
 
@@ -306,7 +332,23 @@ which hold FEMA's own value for a joined record). Columns include:
 - pda_ia_population_other_government_assistance_percent:
 
   Percentage of the population receiving other government assistance
-  (e.g. SSI, SNAP).
+  (e.g. SSI, SNAP), where the report prints a single rate without naming
+  a program. NA where the report gives separate rates by program
+  instead; see the SSI and SNAP columns. It is not the sum of those two
+  rates, because one person can receive both.
+
+- pda_ia_population_ssi_percent:
+
+  Percentage of the population receiving Supplemental Security Income
+  (SSI), where the report labels a rate as SSI. Reports that give counts
+  of recipients rather than rates, or that give figures county by
+  county, are recorded as NA.
+
+- pda_ia_population_snap_percent:
+
+  Percentage of the population receiving Supplemental Nutrition
+  Assistance Program (SNAP) benefits, where the report labels a rate as
+  SNAP. Recorded as NA under the same conditions as the SSI column.
 
 - pda_ia_pre_disaster_unemployment_percent:
 
@@ -363,6 +405,22 @@ the decision date the report prints, and on agreement between the
 hazards the two records describe, with anything ambiguous left
 unmatched; `match_quality` records which of these applied. Set
 `join_outcomes = FALSE` for the reports alone.
+
+Insurance coverage is the least consistently reported field. Reports
+print one or two rates on the insured-residences line, labelled or not,
+in varying order ("12.0%", "0.5% Flood", "64.0% 1.1% Flood", "12.0%
+Flood 0.3%", "Homeowner's 53.0% Flood 6.2%"). A rate labelled as flood
+coverage is recorded as the flood rate; where two rates appear, the
+first is recorded as the total rate and the second as the flood rate,
+which holds in every observed layout. A single unlabelled rate is
+recorded as the total rate. The report does not say which coverage that
+rate measures: for events other than flooding it is very likely
+homeowner's coverage, but for flood-related events the values mix what
+look like flood and homeowner's rates. Lines that cannot be read this
+way (rates listed county by county, two rates with no flood label, or a
+bound such as "\< 1%") are left empty. Compare total insured rates
+across events with caution, especially for flood-related hazards, and do
+not read a missing flood rate as zero flood coverage.
 
 Data quality is reported through a single consolidated warning: how many
 records carry values that may be incorrect – each such record's specific
