@@ -160,7 +160,7 @@ save_pdf = function(url, destfile, minimum_bytes = 2048) {
   "downloaded"
 }
 
-#' @title Download Preliminary Damage Assessment (PDA) Reports to Disk
+#' @title Download Preliminary Damage Assessment (PDA) PDF Reports to Disk
 #'
 #' @description Downloads every PDA report that FEMA publishes into a local
 #'   directory so that `get_preliminary_damage_assessments()` has a complete and
@@ -182,7 +182,11 @@ save_pdf = function(url, destfile, minimum_bytes = 2048) {
 #'   reports first, so  `pages = c(0:5)` is often sufficient and faster. 
 #' @param delay_seconds Seconds to pause between searching listing pages.
 #'   Most users should leave this as-is; shortening this delay can lead to an IP block.
-#' @param quiet Suppress progress messages? Progress is reported by default. 
+#'   After a failed attempt, the pause before retrying is
+#'   `max(1, delay_seconds) * 2^attempt` seconds, capped at 120, so retries
+#'   always back off even when `delay_seconds = 0`.
+#' @param quiet Suppress progress messages? Progress is reported by default.
+#'   Warnings are always raised, regardless of this setting.
 #'
 #' @return Invisibly, a tibble with one row per report found on the site,
 #'   containing `url`, `destination_file`, and `status` (`"cached"`,
@@ -2580,8 +2584,25 @@ join_pda_outcomes = function(pda_df) {
       ask_before_call = FALSE) %>%
     janitor::clean_names() %>%
     ## the source returns one row per designated area, usually a county, so a
-    ## single request appears many times
-    dplyr::distinct(declaration_request_number, .keep_all = TRUE) %>%
+    ## single request appears many times. Programs are turned on area by area,
+    ## so a program counts as declared when any area of the request has it;
+    ## reading the flag from a single area would report, for example, no
+    ## Individuals and Households Program for a declaration that granted it to
+    ## some counties but not others.
+    dplyr::summarize(
+      .by = declaration_request_number,
+      disaster_number = dplyr::first(disaster_number),
+      state = dplyr::first(state),
+      declaration_date = dplyr::first(declaration_date),
+      declaration_title = dplyr::first(declaration_title),
+      fema_designated_area_count = dplyr::n_distinct(designated_area),
+      fema_ihp_declared_area_count = dplyr::n_distinct(
+        designated_area[as.logical(ih_program_declared) %in% TRUE]),
+      ih_program_declared = any(as.logical(ih_program_declared)),
+      ia_program_declared = any(as.logical(ia_program_declared)),
+      pa_program_declared = any(as.logical(pa_program_declared)),
+      hm_program_declared = any(as.logical(hm_program_declared)),
+      tribal_request = any(as.logical(tribal_request))) %>%
     dplyr::transmute(
       ## FEMA's own identifier for the request, assigned whether or not the
       ## request was granted. It is the only field the declarations and the
@@ -2592,15 +2613,20 @@ join_pda_outcomes = function(pda_df) {
       declaration_date = lubridate::as_date(declaration_date),
       declaration_title,
       decision = "Approved",
-      ## FEMA's record of the programs the declaration turned on. `fema_`-named
-      ## here so the final rename pass leaves them untouched.
-      fema_ihp_declared = as.logical(ih_program_declared),
-      fema_ia_declared = as.logical(ia_program_declared),
-      fema_pa_declared = as.logical(pa_program_declared),
-      fema_hm_declared = as.logical(hm_program_declared),
+      ## FEMA's record of the programs the declaration turned on in at least
+      ## one designated area. `fema_`-named here so the final rename pass
+      ## leaves them untouched.
+      fema_ihp_declared = ih_program_declared,
+      fema_ia_declared = ia_program_declared,
+      fema_pa_declared = pa_program_declared,
+      fema_hm_declared = hm_program_declared,
+      ## how many designated areas the declaration covers, and how many of
+      ## those received the Individuals and Households Program
+      fema_designated_area_count,
+      fema_ihp_declared_area_count,
       ## FEMA's record of whether a tribal government made the request; the
       ## counterpart of the report-derived tribal flag
-      fema_tribal_request = as.logical(tribal_request)) %>%
+      fema_tribal_request = tribal_request) %>%
     ## the declarations record abbreviates the state; the PDA text spells it out
     dplyr::left_join(
       state_reference() %>% dplyr::rename(state = state_abbreviation),
@@ -2815,6 +2841,7 @@ join_pda_outcomes = function(pda_df) {
       fema_decision_year, fema_declaration_request_date, fema_declaration_title,
       fema_requested_incident_types, fema_hazards,
       fema_ihp_declared, fema_ia_declared, fema_pa_declared, fema_hm_declared,
+      fema_designated_area_count, fema_ihp_declared_area_count,
       fema_ihp_requested, fema_ia_requested, fema_pa_requested,
       fema_hm_requested, fema_tribal_request, pda_matched,
       pda_match_quality, dplyr::any_of("pda_warnings"), dplyr::everything())
@@ -2834,9 +2861,8 @@ join_pda_outcomes = function(pda_df) {
 #'   \url{https://www.fema.gov/disaster/how-declared/preliminary-damage-assessments/reports}.
 #'   Owing to the unstructured nature of the source documents, some fields may be incorrect
 #'   in the data returned by the function, though significant quality checks have been
-#'   implemented in an effort to produce a high-quality dataset. Users should work with these
-#'   data accordingly.
-#' 
+#'   implemented in an effort to produce a high-quality dataset.
+#'
 #'   With `join_outcomes = TRUE` (the default), the PDA data are attached to
 #'   FEMA's own structured records of which declaration requests were declared and
 #'   denied. FEMA's
@@ -2850,8 +2876,24 @@ join_pda_outcomes = function(pda_df) {
 #'   ambiguous left unmatched; `match_quality` records
 #'   which of these applied. Set `join_outcomes = FALSE` for the reports alone.
 #'
+#'   Insurance coverage is the least consistently reported field. Reports print
+#'   one or two rates on the insured-residences line, labelled or not, in
+#'   varying order ("12.0%", "0.5% Flood", "64.0% 1.1% Flood", "12.0% Flood
+#'   0.3%", "Homeowner's 53.0% Flood 6.2%"). A rate labelled as flood coverage
+#'   is recorded as the flood rate; where two rates appear, the first is
+#'   recorded as the total rate and the second as the flood rate, which holds in
+#'   every observed layout. A single unlabelled rate is recorded as the total
+#'   rate. The report does not say which coverage that rate measures: for
+#'   events other than flooding it is very likely homeowner's coverage, but for
+#'   flood-related events the values mix what look like flood and homeowner's
+#'   rates. Lines that cannot be read this way (rates listed county by county,
+#'   two rates with no flood label, or a bound such as "< 1%") are left empty.
+#'   Compare total insured rates across events with caution, especially for
+#'   flood-related hazards, and do not read a missing flood rate as zero flood
+#'   coverage.
+#'
 #'   Data quality is reported through a single consolidated warning: how many
-#'   records carry values produced through a less-robust fallback mechanism -- each such record's specific
+#'   records carry values that may be incorrect -- each such record's specific
 #'   issue(s) are written to the `pda_warnings` column -- and how many PDA
 #'   reports could not be matched to an authoritative FEMA declaration or
 #'   denial and are therefore absent from the returned data.
@@ -2878,7 +2920,14 @@ join_pda_outcomes = function(pda_df) {
 #'   `fema_` for FEMA's own declaration and denial records, `pda_` for values
 #'   read out of the PDF reports. A column keeps the same name under either
 #'   setting. When `join_outcomes = FALSE`, the columns describing the FEMA
-#'   record or the match to it are absent, and three columns
+#'   record or the match to it -- `fema_declaration_request_number`,
+#'   `fema_disaster_number`, `fema_state_name`,
+#'   `fema_state_fips`, `fema_decision`,
+#'   `fema_decision_date`, `fema_decision_year`, `fema_declaration_request_date`,
+#'   `fema_declaration_title`, `fema_requested_incident_types`, `fema_hazards`,
+#'   the eight `fema_*_declared`/`fema_*_requested` program fields,
+#'   `fema_designated_area_count`, `fema_ihp_declared_area_count`,
+#'   `fema_tribal_request`, `pda_matched`, and `pda_match_quality` -- are absent, and three columns
 #'   present only on that path take their place: `pda_disaster_number`, the
 #'   disaster number the report itself prints, and `pda_state_name` and
 #'   `pda_state_fips`, the state read out of the report text (described under
@@ -2887,8 +2936,13 @@ join_pda_outcomes = function(pda_df) {
 #'   Columns include:
 #'   \describe{
 #'     \item{fema_declaration_request_number}{FEMA's own identifier for the
-#'        declaration request, merged across approvals and denials. This is the unique key
-#'        for the disaster-level data.}
+#'        declaration request, and the unique key of the returned data. It is
+#'        never missing and never shared by two records, for approvals and
+#'        denials alike, so it is the field to key an analysis on and the one to
+#'        join other datasets by. `fema_disaster_number` identifies an approval
+#'        just as well but is always NA on a denial. This column is absent when
+#'        `join_outcomes = FALSE`, since it comes from FEMA's records rather
+#'        than from a report; `pda_path` is the key of that output.}
 #'     \item{fema_disaster_number}{FEMA disaster number. Denied requests are always NA.}
 #'     \item{fema_state_name}{The requesting state or territory. A tribal request carries
 #'        the state the tribe's lands lie in, as recorded by FEMA.}
@@ -2905,8 +2959,17 @@ join_pda_outcomes = function(pda_df) {
 #'     \item{fema_ihp_declared, fema_ia_declared, fema_pa_declared, fema_hm_declared}{FEMA's
 #'        record of whether the declaration authorized the Individuals and Households Program,
 #'        the (pre-2002) Individual Assistance program, Public Assistance, and Hazard
-#'        Mitigation. NA for denied requests. A program can be declared without appearing in the 
+#'        Mitigation. NA for denied requests. FEMA turns programs on area by area, so a
+#'        program is TRUE here when at least one designated area of the declaration received
+#'        it; [transform_pda_counties()] gives the flags for each area. These flags record
+#'        FEMA's current record of the declaration, including programs added by later
+#'        amendments. A program can be declared without appearing in the
 #'        PDA -- added by a later request -- so these legitimately diverge from the `pda_*_requested` flags.}
+#'     \item{fema_designated_area_count}{The number of distinct designated areas (usually
+#'        counties, also tribal areas and statewide designations) FEMA lists for the
+#'        declaration. NA for denied requests.}
+#'     \item{fema_ihp_declared_area_count}{How many of those designated areas received the
+#'        Individuals and Households Program. NA for denied requests.}
 #'     \item{fema_ihp_requested, fema_ia_requested, fema_pa_requested, fema_hm_requested}{FEMA's
 #'        record of the programs the denied request asked for. NA for approvals. 
 #'        Requests for the Individual Assistance umbrella programs are recorded under
@@ -2977,11 +3040,9 @@ join_pda_outcomes = function(pda_df) {
 #'     \item{pda_ia_residences_affected}{Number of residences affected (lowest damage category).}
 #'     \item{pda_ia_residences_insured_total_percent}{Percentage of impacted residences with insurance
 #'        coverage. A rate the report prints without a label is recorded here, though for a
-#'        flood-related event it may be the flood rate. This field is reported ambiguously in some
-#'        PDA reports and should be used with caution.}
+#'        flood-related event it may be the flood rate; see Details.}
 #'     \item{pda_ia_residences_insured_flood_percent}{Percentage of impacted residences with flood
-#'        insurance coverage, where the report labels a rate as flood coverage. This field is reported 
-#'        ambiguously in some PDA reports and should be used with caution..}
+#'        insurance coverage, where the report labels a rate as flood coverage; see Details.}
 #'     \item{pda_ia_households_poverty_percent}{Percentage of households in poverty (or low income,
 #'        depending on report vintage).}
 #'     \item{pda_ia_households_owner_percent}{Percentage of households that are owner-occupied.}
@@ -3191,7 +3252,9 @@ utils::globalVariables(c(
   "hm_program_declared", "ih_program_requested", "ia_program_requested",
   "pa_program_requested", "hm_program_requested",
   "fema_ihp_declared", "fema_ia_declared", "fema_pa_declared",
-  "fema_hm_declared", "fema_ihp_requested", "fema_ia_requested",
+  "fema_hm_declared", "fema_designated_area_count",
+  "fema_ihp_declared_area_count", "designated_area",
+  "fema_ihp_requested", "fema_ia_requested",
   "fema_pa_requested", "fema_hm_requested",
   "tribal_request", "fema_tribal_request", "tribal_mismatch",
   "tribal_mismatch_text", "pda_tribal_flag", "pda_warnings",

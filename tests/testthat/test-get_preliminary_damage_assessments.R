@@ -619,3 +619,70 @@ test_that("government assistance rates are assigned to the program printed besid
   expect_equal(read_assistance_rates("0 assistance such as SSI and SNAP: N/A"), rep(NA_real_, 3))
   expect_equal(read_assistance_rates("7.0% assistance such as SSI and SNAP: 34.2% 0"), rep(NA_real_, 3))
 })
+
+test_that("a program counts as declared when any designated area of the declaration has it", {
+  report_text <- c(
+    "Preliminary Damage Assessment Report\n",
+    "State of Missouri - Severe Storms and Flooding\n",
+    "FEMA-1736-DR Declared November 13, 2007\n",
+    "On October 30, 2007, Governor Matt Blunt requested a major disaster declaration due to severe storms. ",
+    "The Governor requested a declaration for Individual Assistance for two counties and Public Assistance for two counties. ",
+    "Summary of Damage Assessment Information: Individual Assistance ",
+    "Total Number of Residences Impacted:3 479 ",
+    "Public Assistance: Total Public Assistance Cost Estimate: $28,931,081 ",
+    "The Preliminary Damage Assessment PDA process is a mechanism and the rest is boilerplate.")
+
+  ## FEMA's declarations record has one row per designated area. The first
+  ## area listed did not receive the Individuals and Households Program, so a
+  ## flag read from that row alone would wrongly say the program was not
+  ## declared.
+  declarations <- tibble::tibble(
+    disasterNumber = 1736, declarationRequestNumber = "07093",
+    state = "MO", declarationDate = "2007-11-13T00:00:00.000Z",
+    declarationTitle = "SEVERE STORMS AND FLOODING",
+    designatedArea = c("Adair (County)", "Boone (County)", "Cole (County)"),
+    ihProgramDeclared = c(FALSE, TRUE, TRUE), iaProgramDeclared = FALSE,
+    paProgramDeclared = TRUE, hmProgramDeclared = c(FALSE, FALSE, TRUE),
+    tribalRequest = FALSE)
+  denials <- tibble::tibble(
+    declarationRequestNumber = "07100", state = "Missouri",
+    declarationRequestDate = "2007-10-01T00:00:00.000Z",
+    requestStatusDate = "2007-10-20T00:00:00.000Z",
+    incidentName = "Flooding", requestedIncidentTypes = "Flood",
+    currentRequestStatus = "Turndown", declarationRequestType = "Major Disaster",
+    ihProgramRequested = TRUE, iaProgramRequested = FALSE,
+    paProgramRequested = TRUE, hmProgramRequested = FALSE, tribalRequest = FALSE)
+
+  testthat::local_mocked_bindings(
+    pdf_text = function(pdf, ...) report_text,
+    .package = "pdftools")
+  testthat::local_mocked_bindings(
+    open_fema = function(data_set, ...) {
+      if (data_set == "DeclarationDenials") denials else declarations },
+    .package = "rfema")
+
+  ## the same steps `get_preliminary_damage_assessments()` runs before the join
+  pda_df <- extract_pda_attributes("PDAReport_FEMA-1736-DR-MO.pdf") %>%
+    correct_duplicate_disaster_numbers() %>%
+    resolve_requested_flags() %>%
+    check_pda_quality() %>%
+    add_pda_derived_columns() %>%
+    impute_per_capita_indicators() %>%
+    add_pda_summary_measures()
+
+  joined <- suppressWarnings(suppressMessages(join_pda_outcomes(pda_df)))
+  approved <- joined %>% dplyr::filter(fema_decision == "Approved")
+  denied <- joined %>% dplyr::filter(fema_decision == "Denied")
+
+  ## one row per request, not one per designated area
+  expect_equal(nrow(approved), 1)
+  expect_true(approved$fema_ihp_declared)
+  expect_true(approved$fema_hm_declared)
+  expect_true(approved$fema_pa_declared)
+  expect_false(approved$fema_ia_declared)
+  expect_equal(approved$fema_designated_area_count, 3)
+  expect_equal(approved$fema_ihp_declared_area_count, 2)
+  ## a denied request has no designated areas
+  expect_true(is.na(denied$fema_ihp_declared))
+  expect_true(is.na(denied$fema_ihp_declared_area_count))
+})

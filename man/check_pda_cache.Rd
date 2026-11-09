@@ -16,7 +16,8 @@ shows), \code{cached} (PDF files in \code{cache_directory}), and \code{differenc
 }
 \description{
 Compares the FEMA-reported number of reports
-to the number of PDF files in \code{cache_directory}.
+to the number of PDF files in \code{cache_directory} to assess whether the cache
+is up to date.
 }
 \details{
 The two numbers are not guaranteed to match exactly even when the

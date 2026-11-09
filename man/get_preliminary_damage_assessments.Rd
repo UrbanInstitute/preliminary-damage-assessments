@@ -2,7 +2,7 @@
 % Please edit documentation in R/get_preliminary_damage_assessments.R
 \name{get_preliminary_damage_assessments}
 \alias{get_preliminary_damage_assessments}
-\title{Get FEMA Preliminary Damage Assessments Report Data}
+\title{Get FEMA Preliminary Damage Assessment Report Data}
 \usage{
 get_preliminary_damage_assessments(
   file_path,
@@ -44,6 +44,7 @@ record or the match to it -- \code{fema_declaration_request_number},
 \code{fema_decision_date}, \code{fema_decision_year}, \code{fema_declaration_request_date},
 \code{fema_declaration_title}, \code{fema_requested_incident_types}, \code{fema_hazards},
 the eight \verb{fema_*_declared}/\verb{fema_*_requested} program fields,
+\code{fema_designated_area_count}, \code{fema_ihp_declared_area_count},
 \code{fema_tribal_request}, \code{pda_matched}, and \code{pda_match_quality} -- are absent, and three columns
 present only on that path take their place: \code{pda_disaster_number}, the
 disaster number the report itself prints, and \code{pda_state_name} and
@@ -76,8 +77,17 @@ types (denied records only).}
 \item{fema_ihp_declared, fema_ia_declared, fema_pa_declared, fema_hm_declared}{FEMA's
 record of whether the declaration authorized the Individuals and Households Program,
 the (pre-2002) Individual Assistance program, Public Assistance, and Hazard
-Mitigation. NA for denied requests. A program can be declared without appearing in the
+Mitigation. NA for denied requests. FEMA turns programs on area by area, so a
+program is TRUE here when at least one designated area of the declaration received
+it; \code{\link[=transform_pda_counties]{transform_pda_counties()}} gives the flags for each area. These flags record
+FEMA's current record of the declaration, including programs added by later
+amendments. A program can be declared without appearing in the
 PDA -- added by a later request -- so these legitimately diverge from the \verb{pda_*_requested} flags.}
+\item{fema_designated_area_count}{The number of distinct designated areas (usually
+counties, also tribal areas and statewide designations) FEMA lists for the
+declaration. NA for denied requests.}
+\item{fema_ihp_declared_area_count}{How many of those designated areas received the
+Individuals and Households Program. NA for denied requests.}
 \item{fema_ihp_requested, fema_ia_requested, fema_pa_requested, fema_hm_requested}{FEMA's
 record of the programs the denied request asked for. NA for approvals.
 Requests for the Individual Assistance umbrella programs are recorded under
